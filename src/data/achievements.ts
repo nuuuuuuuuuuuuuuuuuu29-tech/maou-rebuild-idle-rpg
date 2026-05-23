@@ -51,6 +51,13 @@ export const ACHIEVEMENTS: AchievementDefinition[] = [
     requirement: { type: "rareRewards", count: 1 },
   },
   {
+    id: "rare-spoils-five",
+    title: "希少品を嗅ぎ分ける者",
+    description: "Rare以上の戦利品や救出魔物を5回入手する。",
+    category: "collection",
+    requirement: { type: "rareRewards", count: 5 },
+  },
+  {
     id: "collector-ten",
     title: "再建目録の一頁",
     description: "図鑑登録数の合計が10件に到達する。",

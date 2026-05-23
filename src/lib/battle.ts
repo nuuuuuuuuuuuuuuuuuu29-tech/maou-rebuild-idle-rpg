@@ -14,7 +14,9 @@ import type {
   LogEntry,
   RewardItemStack,
 } from "../types/game";
+import { getDungeonMasteryInfo } from "./mastery";
 import { createUnit, makeId } from "./progression";
+import { getRareDropMasteryBonus, isRareDropItem } from "./rareDrops";
 
 interface BattleSimulationResult {
   record: ExpeditionRecord;
@@ -395,10 +397,11 @@ const collectRewardItems = (
   rewards: DungeonRewardItem[],
   rewardMultiplier: number,
   lootBonus: number,
+  rareDropBonus = 0,
 ) => {
   const found: RewardItemStack[] = [];
   rewards.forEach((reward) => {
-    const chance = clamp(reward.chance + lootBonus, 0.05, 0.92);
+    const chance = clamp(reward.chance + lootBonus + (isRareDropItem(reward.itemId) ? rareDropBonus : 0), 0.05, 0.92);
     if (Math.random() <= chance) {
       const baseQuantity = randomInt(reward.min, reward.max);
       const quantity = Math.max(1, Math.round(baseQuantity * rewardMultiplier));
@@ -414,6 +417,8 @@ export const simulateExpedition = (
 ): BattleSimulationResult => {
   const dungeon = getDungeon(active.dungeonId);
   const flavor = dungeonFlavor[dungeon.id] ?? dungeonFlavor["ash-border-village"];
+  const masteryInfo = getDungeonMasteryInfo(state, active.dungeonId);
+  const rareDropMasteryBonus = getRareDropMasteryBonus(masteryInfo.level);
   const strategy = getStrategy(active.strategy);
   const item = active.itemId ? getItemDefinition(active.itemId) : undefined;
   const itemEffect = item?.effect;
@@ -567,7 +572,7 @@ export const simulateExpedition = (
   const territory = status === "success" ? dungeon.territoryReward : 0;
   const items =
     status === "success"
-      ? collectRewardItems(dungeon.rewards, rewardMultiplier, lootBonus)
+      ? collectRewardItems(dungeon.rewards, rewardMultiplier, lootBonus, rareDropMasteryBonus)
       : collectRewardItems(dungeon.rewards, 0.5, lootBonus - 0.2).slice(0, 1);
 
   if (items.length > 0) {
@@ -630,7 +635,7 @@ export const simulateExpedition = (
     logIndex += 1;
   }
 
-  if (hasRareReward(items, rescuedUnits)) {
+  if (hasRareReward([], rescuedUnits)) {
     logs.push(makeLog(active, logIndex, "loot", pick(rareRewardLines)));
     logIndex += 1;
   }

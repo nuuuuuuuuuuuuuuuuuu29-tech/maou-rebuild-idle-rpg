@@ -9,6 +9,7 @@ import {
   getTotalBossDefeats,
 } from "../lib/achievements";
 import { formatDungeonMasteryBonus, getDungeonMasteryInfo } from "../lib/mastery";
+import { getRarityLabel, isRareDropRarity } from "../lib/rareDrops";
 import type { CollectionRewardContent, GameState } from "../types/game";
 
 interface CollectionProps {
@@ -231,10 +232,17 @@ const Collection = ({ game, onClaimReward }: CollectionProps) => {
         <div className="collection-grid">
           {ITEM_DEFINITIONS.map((item) => {
             const known = game.collection.items.includes(item.id);
+            const rareDrop = known && isRareDropRarity(item.rarity);
             return (
-              <article key={item.id} className="collection-card">
+              <article key={item.id} className={rareDrop ? "collection-card is-rare-drop" : "collection-card"}>
                 <span className="large-icon">{known ? item.icon : "??"}</span>
                 <strong>{known ? item.name : "？？？"}</strong>
+                {known && (
+                  <span className={`collection-rarity rarity-${item.rarity}`}>
+                    {getRarityLabel(item.rarity)}
+                    {rareDrop ? " / 希少品" : ""}
+                  </span>
+                )}
                 <small>{known ? item.description : "未発見"}</small>
               </article>
             );

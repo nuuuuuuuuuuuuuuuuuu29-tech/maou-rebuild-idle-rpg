@@ -63,6 +63,25 @@ test("localStorageへ保存し、復元できる", () => {
   assert.ok(fake.store.has(storage.STORAGE_KEY));
 });
 
+test("既存v4セーブをマイグレーションなしで読み込める", () => {
+  const { fake, storage } = loadStorageWithFake();
+  const state = {
+    ...createInitialState(),
+    version: storage.SAVE_VERSION,
+    gold: 777,
+    dungeonMastery: [{ dungeonId: "ash-border-village", clearCount: 5 }],
+  };
+  fake.api.setItem(storage.STORAGE_KEY, JSON.stringify(state));
+
+  const loaded = storage.loadSavedGame();
+
+  assert.equal(loaded.status, "loaded");
+  assert.equal(loaded.backupKey, undefined);
+  assert.equal(loaded.state.version, storage.SAVE_VERSION);
+  assert.equal(loaded.state.gold, 777);
+  assert.equal(loaded.state.dungeonMastery.find((entry) => entry.dungeonId === "ash-border-village").clearCount, 5);
+});
+
 test("v2相当のセーブデータを現行版へ移行し、移行前バックアップを残す", () => {
   const { fake, storage } = loadStorageWithFake();
   const v2State = {

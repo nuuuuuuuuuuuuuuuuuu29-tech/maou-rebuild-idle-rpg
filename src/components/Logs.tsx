@@ -2,6 +2,7 @@ import { getItemDefinition } from "../data/items";
 import { getStrategy } from "../data/strategies";
 import { formatSeconds, getActiveExpeditionLogs, getActiveProgress } from "../lib/expedition";
 import { getGoals, getNextAction } from "../lib/guidance";
+import { formatRareDropItems, getRareDropItems } from "../lib/rareDrops";
 import type { ExpeditionRecord, GameState, LogType } from "../types/game";
 import type { TabId } from "./Nav";
 
@@ -43,11 +44,9 @@ const RewardLine = ({ record, detailed = false }: { record: ExpeditionRecord; de
   const { rewards } = record;
   const itemText = rewards.items.map((item) => `${getItemDefinition(item.itemId).name} x${item.quantity}`).join("、");
   const rescuedText = rewards.rescuedUnits.map((unit) => `${unit.name}（${unit.species}）`).join("、");
+  const rareDropItems = getRareDropItems(rewards.items);
   const hasRareReward =
-    rewards.items.some((item) => {
-      const rarity = getItemDefinition(item.itemId).rarity;
-      return rarity === "rare" || rarity === "epic" || rarity === "legendary";
-    }) || rewards.rescuedUnits.some((unit) => unit.rarity === "rare" || unit.rarity === "epic" || unit.rarity === "legendary");
+    rareDropItems.length > 0 || rewards.rescuedUnits.some((unit) => unit.rarity === "rare" || unit.rarity === "epic" || unit.rarity === "legendary");
   const itemChips = rewards.items.map((item) => {
     const definition = getItemDefinition(item.itemId);
     return (
@@ -90,6 +89,12 @@ const RewardLine = ({ record, detailed = false }: { record: ExpeditionRecord; de
               {rewards.mvp.name} / {rewards.mvp.title}
             </strong>
             <p>{rewards.mvp.note}</p>
+          </article>
+        )}
+        {rareDropItems.length > 0 && (
+          <article className="reward-metric rare-drop-metric wide-metric">
+            <span>希少戦利品</span>
+            <strong>{formatRareDropItems(rareDropItems)}</strong>
           </article>
         )}
         <article className="reward-metric wide-metric">

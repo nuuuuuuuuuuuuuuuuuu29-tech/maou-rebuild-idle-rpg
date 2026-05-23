@@ -899,6 +899,35 @@ label {
   font-weight: 800;
 }
 
+.rare-drop-preview {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) 1fr;
+  gap: 12px;
+  margin-top: 12px;
+  border: 1px solid rgba(244, 208, 131, 0.24);
+  border-radius: 8px;
+  background: rgba(18, 10, 18, 0.68);
+  padding: 12px;
+}
+
+.rare-drop-preview strong {
+  color: var(--gold-2);
+}
+
+.rare-drop-preview small,
+.rare-candidate-empty {
+  display: block;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.rare-candidate-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
 .sub-heading {
   display: flex;
   align-items: baseline;
@@ -958,6 +987,14 @@ label {
   background:
     linear-gradient(135deg, rgba(214, 166, 76, 0.14), rgba(154, 103, 199, 0.12)),
     rgba(18, 10, 18, 0.92);
+}
+
+.rare-drop-metric {
+  border-color: rgba(244, 208, 131, 0.72);
+  background:
+    linear-gradient(135deg, rgba(214, 166, 76, 0.2), rgba(181, 66, 79, 0.14)),
+    rgba(18, 10, 18, 0.94);
+  box-shadow: 0 0 22px rgba(214, 166, 76, 0.16);
 }
 
 .mvp-metric p {
@@ -1401,6 +1438,37 @@ label {
   box-shadow: 0 0 24px rgba(244, 208, 131, 0.34);
 }
 
+.collection-card.is-rare-drop {
+  border-color: rgba(244, 208, 131, 0.52);
+}
+
+.collection-rarity {
+  align-self: flex-start;
+  border: 1px solid rgba(123, 78, 80, 0.55);
+  border-radius: 999px;
+  background: rgba(19, 12, 20, 0.92);
+  color: var(--muted);
+  padding: 3px 8px;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.collection-rarity.rarity-rare {
+  border-color: rgba(244, 208, 131, 0.72);
+  color: #fff2c8;
+}
+
+.collection-rarity.rarity-epic {
+  border-color: rgba(193, 151, 242, 0.82);
+  color: #efe2ff;
+}
+
+.collection-rarity.rarity-legendary {
+  border-color: rgba(255, 219, 117, 0.95);
+  color: #fff7d0;
+  background: rgba(214, 166, 76, 0.14);
+}
+
 .reward-metric {
   background:
     linear-gradient(180deg, rgba(35, 22, 34, 0.94), rgba(15, 9, 15, 0.96));
@@ -1599,5 +1667,9 @@ label {
   .sub-heading {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .rare-drop-preview {
+    grid-template-columns: 1fr;
   }
 }

@@ -5,6 +5,7 @@ import { STRATEGIES } from "../data/strategies";
 import { formatSeconds, getActiveProgress, getAdjustedDuration } from "../lib/expedition";
 import { getFirstPlayableDungeon, getRecommendedUnits, getUnitScore } from "../lib/guidance";
 import { formatDungeonMasteryBonus, getDungeonMasteryInfo } from "../lib/mastery";
+import { getRareDropCandidates } from "../lib/rareDrops";
 import type { GameState, GameUnit, StrategyId } from "../types/game";
 
 interface ExpeditionProps {
@@ -24,6 +25,7 @@ const Expedition = ({ game, now, onStart }: ExpeditionProps) => {
   const progress = getActiveProgress(game, now);
   const selectedDungeon = DUNGEONS.find((dungeon) => dungeon.id === dungeonId) ?? DUNGEONS[0];
   const selectedMastery = getDungeonMasteryInfo(game, selectedDungeon.id);
+  const rareDropCandidates = useMemo(() => getRareDropCandidates(selectedDungeon.rewards, 3), [selectedDungeon]);
   const selectableUnits = useMemo(() => game.units.filter((unit) => unit.status === "idle"), [game.units]);
   const recommendedUnits = useMemo(() => getRecommendedUnits(game), [game]);
   const recommendedUnitIds = useMemo(() => new Set(recommendedUnits.map((unit) => unit.id)), [recommendedUnits]);
@@ -156,6 +158,29 @@ const Expedition = ({ game, now, onStart }: ExpeditionProps) => {
           <span>踏破{selectedMastery.clearCount}回</span>
           <span>{formatDungeonMasteryBonus(selectedMastery.level)}</span>
           <span>{selectedMastery.nextTarget ? `次Lvまで${selectedMastery.remainingToNext}回` : "熟練度最大"}</span>
+        </div>
+
+        <div className="rare-drop-preview">
+          <div>
+            <strong>主な希少候補</strong>
+            <small>
+              {selectedMastery.level > 0
+                ? "熟練度により、希少品の気配がわずかに濃くなっています。"
+                : "熟練度が上がると、希少品の気配が少しずつ濃くなります。"}
+            </small>
+          </div>
+          <div className="rare-candidate-row">
+            {rareDropCandidates.length > 0 ? (
+              rareDropCandidates.map((item) => (
+                <span key={item.itemId} className={`loot-chip rarity-${item.rarity}`}>
+                  {item.icon} {item.name}
+                  <em>{item.label}</em>
+                </span>
+              ))
+            ) : (
+              <span className="rare-candidate-empty">この遠征では基礎物資が中心です。</span>
+            )}
+          </div>
         </div>
 
         <div className="form-block">

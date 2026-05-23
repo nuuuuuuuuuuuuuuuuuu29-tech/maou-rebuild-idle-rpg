@@ -18,6 +18,7 @@ import {
   recoverUnits,
   removeInventoryItem,
 } from "./progression";
+import { formatRareDropItems, getFirstDiscoveredRareDropItems, getRareDropItems } from "./rareDrops";
 
 export interface GameActionResult {
   ok: boolean;
@@ -164,6 +165,30 @@ const finishExpedition = (state: GameState, now: number): GameState => {
           },
         ]
       : [];
+  const acceptedRareDrops = getRareDropItems(inventoryResult.accepted);
+  const firstRareDrops = getFirstDiscoveredRareDropItems(inventoryResult.accepted, state.collection.items);
+  const rareDropLogs = [
+    ...(acceptedRareDrops.length > 0
+      ? [
+          {
+            id: makeId("log"),
+            at: active.endsAt,
+            type: "loot" as const,
+            message: `希少戦利品: ${formatRareDropItems(acceptedRareDrops)} を宝物庫に納めた。遠征隊の足跡に、薄い金の火が残る。`,
+          },
+        ]
+      : []),
+    ...(firstRareDrops.length > 0
+      ? [
+          {
+            id: makeId("log"),
+            at: active.endsAt,
+            type: "success" as const,
+            message: `初入手: ${formatRareDropItems(firstRareDrops)} を図鑑に刻んだ。次の周回で狙うべき影が、ひとつ増えた。`,
+          },
+        ]
+      : []),
+  ];
   const masteryBonusLogs =
     masteryApplies && (goldWithMastery > simulation.rewards.gold || unitExpWithMastery > simulation.rewards.unitExp)
       ? [
@@ -180,7 +205,7 @@ const finishExpedition = (state: GameState, now: number): GameState => {
     ...simulation.record,
     endedAt: active.endsAt,
     rewards,
-    logs: [...simulation.record.logs, ...levelUpLogs, ...extraLogs, ...masteryBonusLogs],
+    logs: [...simulation.record.logs, ...levelUpLogs, ...extraLogs, ...rareDropLogs, ...masteryBonusLogs],
   };
   const masteryResult = updateDungeonMasteryForRecord(state.dungeonMastery, record);
 
