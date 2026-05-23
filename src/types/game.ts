@@ -186,6 +186,40 @@ export interface AchievementState {
   unlocked: AchievementUnlock[];
 }
 
+export type TitleCategory =
+  | "expedition"
+  | "battle"
+  | "growth"
+  | "collection"
+  | "mastery"
+  | "rare"
+  | "resilience";
+
+export type TitleRequirement =
+  | { type: "always" }
+  | { type: "expeditionCount"; count: number }
+  | { type: "successCount"; count: number }
+  | { type: "failureOrRetreatCount"; count: number }
+  | { type: "bossDefeats"; count: number }
+  | { type: "demonLordLevel"; level: number }
+  | { type: "territoryLiberation"; percent: number }
+  | { type: "collectionTotal"; count: number }
+  | { type: "monsterCollection"; count: number }
+  | { type: "itemCollection"; count: number }
+  | { type: "dungeonCollection"; count: number }
+  | { type: "dungeonMasteryLevel"; level: number; dungeonId?: string }
+  | { type: "rareRewards"; count: number };
+
+export interface TitleDefinition {
+  id: string;
+  name: string;
+  flavor: string;
+  category: TitleCategory;
+  requirement: TitleRequirement;
+  priority: number;
+  hiddenUntilUnlocked?: boolean;
+}
+
 export interface BossDefeatRecord {
   dungeonId: string;
   defeats: number;
@@ -282,6 +316,7 @@ export interface GameState {
   bossRecords: BossDefeatRecord[];
   dungeonMastery: DungeonMasteryRecord[];
   collectionRewards: CollectionRewardState;
+  selectedTitleId?: string;
   tutorialDismissed?: boolean;
   createdAt: number;
   updatedAt: number;

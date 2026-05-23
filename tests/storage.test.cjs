@@ -2,8 +2,30 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const { createInitialState } = require("../.tmp-tests/src/lib/progression.js");
+const { DEFAULT_TITLE_ID } = require("../.tmp-tests/src/data/titles.js");
 
 const storagePath = "../.tmp-tests/src/lib/storage.js";
+
+const makeRecord = (overrides = {}) => ({
+  id: "record-storage-success",
+  dungeonId: "ash-border-village",
+  dungeonName: "Ash Border Village",
+  unitNames: ["Unit"],
+  strategy: "balanced",
+  startedAt: 1000,
+  endedAt: 2000,
+  status: "success",
+  logs: [],
+  rewards: {
+    gold: 80,
+    demonExp: 40,
+    unitExp: 30,
+    territory: 4,
+    items: [],
+    rescuedUnits: [],
+  },
+  ...overrides,
+});
 
 const createFakeLocalStorage = () => {
   const store = new Map();
@@ -63,13 +85,14 @@ test("localStorageへ保存し、復元できる", () => {
   assert.ok(fake.store.has(storage.STORAGE_KEY));
 });
 
-test("既存v4セーブをマイグレーションなしで読み込める", () => {
+test("既存v5セーブをマイグレーションなしで読み込める", () => {
   const { fake, storage } = loadStorageWithFake();
   const state = {
     ...createInitialState(),
     version: storage.SAVE_VERSION,
     gold: 777,
     dungeonMastery: [{ dungeonId: "ash-border-village", clearCount: 5 }],
+    selectedTitleId: DEFAULT_TITLE_ID,
   };
   fake.api.setItem(storage.STORAGE_KEY, JSON.stringify(state));
 
@@ -80,6 +103,59 @@ test("既存v4セーブをマイグレーションなしで読み込める", () 
   assert.equal(loaded.state.version, storage.SAVE_VERSION);
   assert.equal(loaded.state.gold, 777);
   assert.equal(loaded.state.dungeonMastery.find((entry) => entry.dungeonId === "ash-border-village").clearCount, 5);
+  assert.equal(loaded.state.selectedTitleId, DEFAULT_TITLE_ID);
+});
+
+test("v4セーブデータをv5へ移行し、selectedTitleIdを安全に初期化する", () => {
+  const { fake, storage } = loadStorageWithFake();
+  const v4State = {
+    ...createInitialState(),
+    version: 4,
+    gold: 888,
+    selectedTitleId: undefined,
+  };
+  delete v4State.selectedTitleId;
+  fake.api.setItem(storage.STORAGE_KEY, JSON.stringify(v4State));
+
+  const loaded = storage.loadSavedGame();
+
+  assert.equal(loaded.status, "migrated");
+  assert.equal(loaded.migratedFrom, 4);
+  assert.equal(loaded.state.version, storage.SAVE_VERSION);
+  assert.equal(loaded.state.gold, 888);
+  assert.equal(loaded.state.selectedTitleId, DEFAULT_TITLE_ID);
+  assert.ok(loaded.backupKey);
+  assert.equal(JSON.parse(fake.api.getItem(loaded.backupKey)).version, 4);
+  assert.equal(JSON.parse(fake.api.getItem(storage.STORAGE_KEY)).version, storage.SAVE_VERSION);
+});
+
+test("selectedTitleIdを保存復元し、不正な称号IDは安全に無効化する", () => {
+  const { fake, storage } = loadStorageWithFake();
+  const selectableState = {
+    ...createInitialState(),
+    records: [makeRecord()],
+    selectedTitleId: "first-expedition-title",
+  };
+
+  storage.saveGameState(selectableState);
+  const loadedSelected = storage.loadSavedGame();
+
+  assert.equal(loadedSelected.status, "loaded");
+  assert.equal(loadedSelected.state.selectedTitleId, "first-expedition-title");
+
+  fake.api.setItem(
+    storage.STORAGE_KEY,
+    JSON.stringify({
+      ...createInitialState(),
+      version: storage.SAVE_VERSION,
+      selectedTitleId: "not-real-title",
+    }),
+  );
+
+  const loadedInvalid = storage.loadSavedGame();
+
+  assert.equal(loadedInvalid.status, "loaded");
+  assert.equal(loadedInvalid.state.selectedTitleId, DEFAULT_TITLE_ID);
 });
 
 test("v2相当のセーブデータを現行版へ移行し、移行前バックアップを残す", () => {

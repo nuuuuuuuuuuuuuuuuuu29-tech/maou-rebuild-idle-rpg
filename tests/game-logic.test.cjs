@@ -9,6 +9,37 @@ const {
   getRareDropMasteryBonus,
   isRareDropItem,
 } = require("../.tmp-tests/src/lib/rareDrops.js");
+const { DEFAULT_TITLE_ID, TITLES } = require("../.tmp-tests/src/data/titles.js");
+const {
+  canSelectTitle,
+  getSelectedTitle,
+  getTitleProgress,
+  getUnlockedTitles,
+  normalizeSelectedTitleId,
+} = require("../.tmp-tests/src/lib/titles.js");
+
+const titleById = (id) => TITLES.find((title) => title.id === id);
+
+const makeRecord = (overrides = {}) => ({
+  id: overrides.id ?? `record-${Math.random().toString(36).slice(2, 8)}`,
+  dungeonId: "ash-border-village",
+  dungeonName: "Ash Border Village",
+  unitNames: ["Unit"],
+  strategy: "balanced",
+  startedAt: 1000,
+  endedAt: 2000,
+  status: "success",
+  logs: [],
+  rewards: {
+    gold: 0,
+    demonExp: 0,
+    unitExp: 0,
+    territory: 0,
+    items: [],
+    rescuedUnits: [],
+  },
+  ...overrides,
+});
 
 const withFixedRandom = (value, fn) => {
   const originalRandom = Math.random;
@@ -249,4 +280,77 @@ test("保有枠不足時は図鑑報酬を受け取らない", () => {
   assert.equal(result.state.gold, state.gold);
   assert.deepEqual(result.state.collectionRewards.claimedIds, []);
   assert.equal(result.state.inventory[0].quantity, base.itemCapacity);
+});
+
+test("初期状態で基本称号を取得し、未選択時は安全な称号へフォールバックする", () => {
+  const state = createInitialState();
+  const unlockedIds = getUnlockedTitles(state).map((title) => title.id);
+
+  assert.ok(unlockedIds.includes(DEFAULT_TITLE_ID));
+  assert.equal(getSelectedTitle(state).id, DEFAULT_TITLE_ID);
+  assert.equal(normalizeSelectedTitleId({ ...state, selectedTitleId: "unknown-title" }), DEFAULT_TITLE_ID);
+});
+
+test("遠征回数、成功数、魔王レベル、図鑑数の称号条件を判定できる", () => {
+  const state = {
+    ...createInitialState(),
+    demonLordLevel: 3,
+    territoryLiberation: 25,
+    records: [makeRecord(), makeRecord({ status: "failure", rewards: undefined })],
+    collection: {
+      monsters: ["cinder-goblin", "thorn-kobold", "dusk-batkin", "bone-vanguard", "iron-slime"],
+      items: ["iron-ration", "smoke-charm", "moon-rust", "grave-moss"],
+      dungeons: ["ash-border-village"],
+    },
+  };
+
+  assert.equal(getTitleProgress(state, titleById("first-expedition-title")).done, true);
+  assert.equal(getTitleProgress(state, titleById("first-reclamation-title")).done, true);
+  assert.equal(getTitleProgress(state, titleById("lord-level-three-title")).done, true);
+  assert.equal(getTitleProgress(state, titleById("territory-quarter-title")).done, true);
+  assert.equal(getTitleProgress(state, titleById("monster-binder-title")).done, true);
+  assert.equal(getTitleProgress(state, titleById("ledger-keeper-title")).done, true);
+});
+
+test("ボス討伐、ダンジョン熟練度、Rare以上入手、不屈系の称号条件を判定できる", () => {
+  const state = {
+    ...createInitialState(),
+    records: [
+      makeRecord({
+        rewards: {
+          gold: 0,
+          demonExp: 0,
+          unitExp: 0,
+          territory: 0,
+          items: [{ itemId: "fallen-signet", quantity: 1 }],
+          rescuedUnits: [],
+        },
+      }),
+      makeRecord({ status: "retreat", rewards: undefined }),
+    ],
+    bossRecords: [{ dungeonId: "ash-border-village", defeats: 1, firstDefeatedAt: 2000, lastDefeatedAt: 2000 }],
+    dungeonMastery: [
+      { dungeonId: "ash-border-village", clearCount: 5 },
+      { dungeonId: "black-glass-woods", clearCount: 1 },
+    ],
+  };
+
+  assert.equal(getTitleProgress(state, titleById("first-boss-slayer-title")).done, true);
+  assert.equal(getTitleProgress(state, titleById("ash-village-ruler")).done, true);
+  assert.equal(getTitleProgress(state, titleById("black-glass-walker")).done, true);
+  assert.equal(getTitleProgress(state, titleById("rare-spoil-bearer")).done, true);
+  assert.equal(getTitleProgress(state, titleById("unyielding-rebuilder")).done, true);
+});
+
+test("獲得済み称号のみ選択可能として扱う", () => {
+  const base = createInitialState();
+  const progressed = {
+    ...base,
+    records: [makeRecord()],
+  };
+
+  assert.equal(canSelectTitle(base, "first-expedition-title"), false);
+  assert.equal(canSelectTitle(progressed, "first-expedition-title"), true);
+  assert.equal(normalizeSelectedTitleId(progressed, "first-expedition-title"), "first-expedition-title");
+  assert.notEqual(normalizeSelectedTitleId(progressed, "not-real-title"), "not-real-title");
 });

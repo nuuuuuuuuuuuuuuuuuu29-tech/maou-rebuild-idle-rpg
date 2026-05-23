@@ -24,8 +24,9 @@ import type {
 import { deriveBossRecordsFromRecords, evaluateAchievements, mergeBossRecords } from "./achievements";
 import { deriveDungeonMasteryFromRecords, mergeDungeonMasteryRecords } from "./mastery";
 import { createInitialState, createUnit } from "./progression";
+import { normalizeSelectedTitleId } from "./titles";
 
-export const SAVE_VERSION = 4;
+export const SAVE_VERSION = 5;
 export const STORAGE_KEY = "maou-rebuild-state-v1";
 
 const BACKUP_PREFIX = "maou-rebuild-state-backup";
@@ -184,6 +185,12 @@ const migrateV3ToV4 = (source: UnknownRecord): UnknownRecord => ({
   dungeonMastery: Array.isArray(source.dungeonMastery) ? source.dungeonMastery : [],
 });
 
+const migrateV4ToV5 = (source: UnknownRecord): UnknownRecord => ({
+  ...source,
+  version: 5,
+  selectedTitleId: typeof source.selectedTitleId === "string" ? source.selectedTitleId : undefined,
+});
+
 const migrateSaveData = (source: UnknownRecord) => {
   const fromVersion = typeof source.version === "number" ? source.version : 1;
 
@@ -204,6 +211,9 @@ const migrateSaveData = (source: UnknownRecord) => {
   }
   if (fromVersion < 4) {
     data = migrateV3ToV4(data);
+  }
+  if (fromVersion < 5) {
+    data = migrateV4ToV5(data);
   }
 
   return {
@@ -600,12 +610,18 @@ const normalizeGameState = (saved: UnknownRecord): GameState => {
     bossRecords,
     dungeonMastery,
     collectionRewards: normalizeCollectionRewards(saved.collectionRewards, fallback.collectionRewards),
+    selectedTitleId: typeof saved.selectedTitleId === "string" ? saved.selectedTitleId : undefined,
     tutorialDismissed: typeof saved.tutorialDismissed === "boolean" ? saved.tutorialDismissed : fallback.tutorialDismissed,
     createdAt: numberOr(saved.createdAt, fallback.createdAt),
     updatedAt: numberOr(saved.updatedAt, fallback.updatedAt),
   };
 
-  return evaluateAchievements(normalized, normalized.updatedAt).state;
+  const withSafeTitle = {
+    ...normalized,
+    selectedTitleId: normalizeSelectedTitleId(normalized),
+  };
+
+  return evaluateAchievements(withSafeTitle, withSafeTitle.updatedAt).state;
 };
 
 const recoverCorruptSave = (raw: string, reason: string): LoadGameResult => {

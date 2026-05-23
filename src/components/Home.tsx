@@ -2,6 +2,7 @@ import { getDungeon } from "../data/dungeons";
 import { getStrategy } from "../data/strategies";
 import { formatSeconds, getActiveProgress } from "../lib/expedition";
 import { getGoals, getNextAction } from "../lib/guidance";
+import { getSelectedTitle } from "../lib/titles";
 import type { GameState } from "../types/game";
 import type { TabId } from "./Nav";
 
@@ -20,6 +21,7 @@ const Home = ({ game, now, onNameChange, onNavigate, onDismissTutorial }: HomePr
   const strategy = active ? getStrategy(active.strategy) : undefined;
   const nextAction = getNextAction(game);
   const goals = getGoals(game);
+  const selectedTitle = getSelectedTitle(game);
   const showTutorial = !game.tutorialDismissed && game.records.length === 0 && !game.activeExpedition;
 
   return (
@@ -34,6 +36,11 @@ const Home = ({ game, now, onNameChange, onNavigate, onDismissTutorial }: HomePr
             onChange={(event) => onNameChange(event.target.value)}
             maxLength={16}
           />
+          <div className="title-badge">
+            <span>称号</span>
+            <strong>{selectedTitle.name}</strong>
+            <small>{selectedTitle.flavor}</small>
+          </div>
         </div>
         <div className="hero-copy">
           <p>小さな勝利を積み上げ、失われた魔界を取り戻す。</p>

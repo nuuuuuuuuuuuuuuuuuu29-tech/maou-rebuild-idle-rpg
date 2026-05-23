@@ -2,6 +2,7 @@ import { ACHIEVEMENTS } from "../data/achievements";
 import { COLLECTION_REWARDS } from "../data/collectionRewards";
 import { DUNGEONS } from "../data/dungeons";
 import { getItemDefinition, ITEM_DEFINITIONS } from "../data/items";
+import { TITLES } from "../data/titles";
 import { UNIT_TEMPLATES } from "../data/units";
 import {
   getAchievementProgress,
@@ -10,11 +11,14 @@ import {
 } from "../lib/achievements";
 import { formatDungeonMasteryBonus, getDungeonMasteryInfo } from "../lib/mastery";
 import { getRarityLabel, isRareDropRarity } from "../lib/rareDrops";
+import { getUnlockedTitles } from "../lib/titles";
 import type { CollectionRewardContent, GameState } from "../types/game";
+import Titles from "./Titles";
 
 interface CollectionProps {
   game: GameState;
   onClaimReward: (rewardId: string) => void;
+  onSelectTitle: (titleId: string) => void;
 }
 
 const categoryLabel = {
@@ -41,7 +45,7 @@ const formatRewardContent = (rewards: CollectionRewardContent) => {
   return parts.length > 0 ? parts.join(" / ") : "記録のみ";
 };
 
-const Collection = ({ game, onClaimReward }: CollectionProps) => {
+const Collection = ({ game, onClaimReward, onSelectTitle }: CollectionProps) => {
   const totalDiscoveries =
     game.collection.monsters.length + game.collection.items.length + game.collection.dungeons.length;
   const unlockedAchievements = new Map(
@@ -50,6 +54,7 @@ const Collection = ({ game, onClaimReward }: CollectionProps) => {
   const claimedRewards = new Set(game.collectionRewards.claimedIds);
   const bossRecords = new Map(game.bossRecords.map((record) => [record.dungeonId, record]));
   const totalDungeonClears = game.dungeonMastery.reduce((total, record) => total + record.clearCount, 0);
+  const unlockedTitleCount = getUnlockedTitles(game).length;
 
   return (
     <section className="screen">
@@ -83,8 +88,16 @@ const Collection = ({ game, onClaimReward }: CollectionProps) => {
             <span>熟練踏破</span>
             <strong>{totalDungeonClears}回</strong>
           </article>
+          <article className="reward-metric">
+            <span>称号</span>
+            <strong>
+              {unlockedTitleCount}/{TITLES.length}
+            </strong>
+          </article>
         </div>
       </section>
+
+      <Titles game={game} onSelectTitle={onSelectTitle} />
 
       <section className="panel">
         <div className="panel-heading">

@@ -7,6 +7,7 @@ import Logs from "./components/Logs";
 import Nav, { type TabId } from "./components/Nav";
 import Settings from "./components/Settings";
 import Units from "./components/Units";
+import { getTitleDefinition } from "./data/titles";
 import {
   advanceGame,
   buyItem,
@@ -21,6 +22,7 @@ import {
   type GameActionResult,
 } from "./lib/expedition";
 import { SAVE_VERSION, loadSavedGame, resetGameState, saveGameState } from "./lib/storage";
+import { canSelectTitle } from "./lib/titles";
 import type { GameState, StrategyId } from "./types/game";
 
 const App = () => {
@@ -90,6 +92,17 @@ const App = () => {
 
   const handleRenameUnit = (unitId: string, name: string) => applyAction(renameUnit(game, unitId, name));
 
+  const handleSelectTitle = (titleId: string) => {
+    const title = getTitleDefinition(titleId);
+    if (!title || !canSelectTitle(game, titleId)) {
+      setNotice("未獲得の称号はまだ掲げられません。遠征と記録を重ねて条件を満たしてください。");
+      return;
+    }
+
+    setGame((previous) => ({ ...previous, selectedTitleId: titleId, updatedAt: Date.now() }));
+    setNotice(`称号「${title.name}」を掲げました。`);
+  };
+
   const handleResetGame = () => {
     const result = resetGameState();
     setNotice(result.message);
@@ -158,7 +171,11 @@ const App = () => {
           />
         )}
         {tab === "collection" && (
-          <Collection game={game} onClaimReward={(rewardId) => applyAction(claimCollectionReward(game, rewardId))} />
+          <Collection
+            game={game}
+            onClaimReward={(rewardId) => applyAction(claimCollectionReward(game, rewardId))}
+            onSelectTitle={handleSelectTitle}
+          />
         )}
         {tab === "settings" && <Settings game={game} saveVersion={SAVE_VERSION} onReset={handleResetGame} />}
       </main>

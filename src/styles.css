@@ -227,6 +227,36 @@ label {
   font-weight: 900;
 }
 
+.title-badge,
+.title-current {
+  border: 1px solid rgba(244, 208, 131, 0.3);
+  border-radius: 8px;
+  background: rgba(18, 10, 18, 0.72);
+  box-shadow: var(--inner-glow);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.title-badge span,
+.title-current span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.title-badge strong,
+.title-current strong {
+  color: var(--gold-2);
+  line-height: 1.4;
+}
+
+.title-badge small,
+.title-current small {
+  color: var(--muted);
+}
+
 .hero-copy {
   justify-self: end;
   max-width: 380px;
@@ -722,6 +752,7 @@ label {
 
 .achievement-card,
 .collection-reward-card,
+.title-card,
 .boss-record-card {
   min-height: 176px;
   border: 1px solid rgba(123, 78, 80, 0.72);
@@ -738,6 +769,7 @@ label {
 
 .achievement-card.is-complete,
 .collection-reward-card.is-complete,
+.title-card.is-complete,
 .boss-record-card.is-complete {
   border-color: rgba(114, 168, 111, 0.58);
 }
@@ -748,8 +780,21 @@ label {
 }
 
 .collection-reward-card .primary-button,
-.collection-reward-card .secondary-button {
+.collection-reward-card .secondary-button,
+.title-card .primary-button,
+.title-card .secondary-button {
   margin-top: auto;
+}
+
+.title-current {
+  margin: 14px 0 12px;
+}
+
+.title-card.is-selected-title {
+  border-color: rgba(244, 208, 131, 0.8);
+  background:
+    linear-gradient(135deg, rgba(214, 166, 76, 0.15), rgba(154, 103, 199, 0.12)),
+    rgba(18, 10, 18, 0.94);
 }
 
 .meta-card-heading {
@@ -764,9 +809,11 @@ label {
 
 .achievement-card p,
 .collection-reward-card p,
+.title-card p,
 .boss-record-card p,
 .achievement-card small,
 .collection-reward-card small,
+.title-card small,
 .boss-record-card small {
   color: var(--muted);
 }
@@ -1246,6 +1293,7 @@ label {
   .sell-row,
   .market-card,
   .collection-card,
+  .title-card,
   .card-hit {
     transition: none;
   }
@@ -1262,6 +1310,7 @@ label {
 .sell-row,
 .market-card,
 .collection-card,
+.title-card,
 .card-hit {
   transition:
     transform 140ms ease,
@@ -1301,10 +1350,11 @@ label {
   .nav-button:hover,
   .dungeon-card:hover,
   .strategy-card:hover,
-  .select-chip:hover,
-  .sell-row:hover,
-  .market-card:hover,
-  .collection-card:hover {
+    .select-chip:hover,
+    .sell-row:hover,
+    .market-card:hover,
+    .collection-card:hover,
+    .title-card:hover {
     transform: translateY(-2px);
     border-color: rgba(244, 208, 131, 0.72);
     box-shadow: 0 16px 30px rgba(0, 0, 0, 0.36), 0 0 0 1px rgba(244, 208, 131, 0.08);
