@@ -3,6 +3,7 @@ import { DUNGEONS } from "../data/dungeons";
 import { getItemDefinition, supportItems } from "../data/items";
 import { STRATEGIES } from "../data/strategies";
 import { formatSeconds, getActiveProgress, getAdjustedDuration } from "../lib/expedition";
+import { evaluateExpeditionRisk, getRecommendedAction, getRiskLabel, getRiskReasons } from "../lib/expeditionRisk";
 import { getFirstPlayableDungeon, getRecommendedUnits, getUnitScore } from "../lib/guidance";
 import { formatDungeonMasteryBonus, getDungeonMasteryInfo } from "../lib/mastery";
 import { getRareDropCandidates } from "../lib/rareDrops";
@@ -42,6 +43,9 @@ const Expedition = ({ game, now, onStart }: ExpeditionProps) => {
   const partyTraitModifiers = useMemo(() => getPartyTraitModifiers(selectedUnits), [selectedUnits]);
   const partyTraitSummary = formatPartyTraitSummary(partyTraitModifiers);
   const isFirstRun = game.records.length === 0;
+  const expeditionRisk = evaluateExpeditionRisk(game, selectedDungeon, selectedUnits, strategyId);
+  const riskReasons = getRiskReasons(expeditionRisk).slice(0, 2);
+  const riskAction = getRecommendedAction(expeditionRisk);
 
   useEffect(() => {
     setSelectedUnitIds((previous) => {
@@ -161,6 +165,19 @@ const Expedition = ({ game, now, onStart }: ExpeditionProps) => {
           <span>踏破{selectedMastery.clearCount}回</span>
           <span>{formatDungeonMasteryBonus(selectedMastery.level)}</span>
           <span>{selectedMastery.nextTarget ? `次Lvまで${selectedMastery.remainingToNext}回` : "熟練度最大"}</span>
+        </div>
+
+        <div className={`risk-panel risk-${expeditionRisk.level}`}>
+          <div className="risk-heading">
+            <span>危険度</span>
+            <strong>{getRiskLabel(expeditionRisk)}</strong>
+          </div>
+          <ul>
+            {riskReasons.map((reason) => (
+              <li key={reason}>{reason}</li>
+            ))}
+          </ul>
+          <p>{riskAction}</p>
         </div>
 
         <div className="trait-preview">

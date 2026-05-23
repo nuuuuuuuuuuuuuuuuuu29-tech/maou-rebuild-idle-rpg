@@ -951,6 +951,85 @@ label {
   font-weight: 800;
 }
 
+.risk-panel {
+  margin-top: 12px;
+  border: 1px solid rgba(244, 208, 131, 0.2);
+  border-radius: 8px;
+  background: rgba(18, 10, 18, 0.72);
+  padding: 12px;
+}
+
+.risk-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.risk-heading span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.risk-heading strong {
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 0.86rem;
+  letter-spacing: 0;
+}
+
+.risk-panel ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text);
+  line-height: 1.6;
+}
+
+.risk-panel p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.risk-safe {
+  border-color: rgba(114, 168, 111, 0.38);
+}
+
+.risk-safe .risk-heading strong {
+  background: rgba(114, 168, 111, 0.18);
+  color: #c7f0c0;
+}
+
+.risk-caution {
+  border-color: rgba(244, 208, 131, 0.42);
+}
+
+.risk-caution .risk-heading strong {
+  background: rgba(244, 208, 131, 0.16);
+  color: var(--gold-2);
+}
+
+.risk-danger {
+  border-color: rgba(213, 75, 75, 0.42);
+}
+
+.risk-danger .risk-heading strong {
+  background: rgba(213, 75, 75, 0.18);
+  color: #ffb0a5;
+}
+
+.risk-reckless {
+  border-color: rgba(174, 87, 224, 0.48);
+}
+
+.risk-reckless .risk-heading strong {
+  background: rgba(174, 87, 224, 0.2);
+  color: #e4c2ff;
+}
+
 .rare-drop-preview {
   display: grid;
   grid-template-columns: minmax(180px, 240px) 1fr;
@@ -1751,6 +1830,11 @@ label {
   }
 
   .trait-preview {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .risk-heading {
     align-items: flex-start;
     flex-direction: column;
   }
