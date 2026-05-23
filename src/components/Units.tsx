@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { getUnitTemplate } from "../data/units";
 import { formatSeconds } from "../lib/expedition";
+import { formatTraitEffect, getUnitTrait } from "../lib/traits";
 import type { GameState, GameUnit, UnitStatus } from "../types/game";
 
 interface UnitsProps {
@@ -40,6 +41,7 @@ const Units = ({ game, now, onRename }: UnitsProps) => {
   const [selectedId, setSelectedId] = useState(game.units[0]?.id ?? "");
   const [editingNames, setEditingNames] = useState<Record<string, string>>({});
   const selected = game.units.find((unit) => unit.id === selectedId) ?? game.units[0];
+  const selectedTrait = selected ? getUnitTrait(selected) : undefined;
 
   const submitRename = (unit: GameUnit) => {
     onRename(unit.id, editingNames[unit.id] ?? unit.name);
@@ -72,6 +74,7 @@ const Units = ({ game, now, onRename }: UnitsProps) => {
                   <small>
                     {unit.species} / Lv{unit.level} / {rarityLabel[unit.rarity]}
                   </small>
+                  <small className="trait-line">特性: {getUnitTrait(unit).name}</small>
                 </span>
                 <span className={`status-dot ${statusClass[unit.status]}`}>{statusLabel[unit.status]}</span>
               </button>
@@ -118,7 +121,14 @@ const Units = ({ game, now, onRename }: UnitsProps) => {
               </strong>
               <span>レアリティ</span>
               <strong>{rarityLabel[selected.rarity]}</strong>
+              <span>特性</span>
+              <strong>{selectedTrait?.name}</strong>
             </div>
+            {selectedTrait && (
+              <p className="trait-description">
+                {selectedTrait.description} {formatTraitEffect(selectedTrait)}
+              </p>
+            )}
           </aside>
         )}
       </div>

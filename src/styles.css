@@ -458,6 +458,11 @@ label {
   color: var(--muted);
 }
 
+.trait-line {
+  color: var(--gold-2);
+  font-weight: 800;
+}
+
 .status-dot {
   border-color: transparent;
 }
@@ -955,6 +960,28 @@ label {
   border-radius: 8px;
   background: rgba(18, 10, 18, 0.68);
   padding: 12px;
+}
+
+.trait-preview {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 12px;
+  border: 1px solid rgba(107, 184, 170, 0.26);
+  border-radius: 8px;
+  background: rgba(18, 10, 18, 0.68);
+  padding: 10px 12px;
+}
+
+.trait-preview strong,
+.trait-description {
+  color: #d8fbf5;
+}
+
+.trait-preview small,
+.trait-description {
+  line-height: 1.6;
 }
 
 .rare-drop-preview strong {
@@ -1721,5 +1748,10 @@ label {
 
   .rare-drop-preview {
     grid-template-columns: 1fr;
+  }
+
+  .trait-preview {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }

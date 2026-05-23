@@ -6,6 +6,7 @@ import { formatSeconds, getActiveProgress, getAdjustedDuration } from "../lib/ex
 import { getFirstPlayableDungeon, getRecommendedUnits, getUnitScore } from "../lib/guidance";
 import { formatDungeonMasteryBonus, getDungeonMasteryInfo } from "../lib/mastery";
 import { getRareDropCandidates } from "../lib/rareDrops";
+import { formatPartyTraitSummary, getPartyTraitModifiers, getUnitTrait } from "../lib/traits";
 import type { GameState, GameUnit, StrategyId } from "../types/game";
 
 interface ExpeditionProps {
@@ -38,6 +39,8 @@ const Expedition = ({ game, now, onStart }: ExpeditionProps) => {
     .map((id) => game.units.find((unit) => unit.id === id))
     .filter((unit): unit is GameUnit => Boolean(unit));
   const selectedScore = selectedUnits.reduce((total, unit) => total + getUnitScore(unit), 0);
+  const partyTraitModifiers = useMemo(() => getPartyTraitModifiers(selectedUnits), [selectedUnits]);
+  const partyTraitSummary = formatPartyTraitSummary(partyTraitModifiers);
   const isFirstRun = game.records.length === 0;
 
   useEffect(() => {
@@ -160,6 +163,11 @@ const Expedition = ({ game, now, onStart }: ExpeditionProps) => {
           <span>{selectedMastery.nextTarget ? `次Lvまで${selectedMastery.remainingToNext}回` : "熟練度最大"}</span>
         </div>
 
+        <div className="trait-preview">
+          <strong>部隊特性</strong>
+          <small>{selectedUnitIds.length > 0 ? partyTraitSummary : "ユニットを選択すると特性補正を確認できます。"}</small>
+        </div>
+
         <div className="rare-drop-preview">
           <div>
             <strong>主な希少候補</strong>
@@ -191,6 +199,7 @@ const Expedition = ({ game, now, onStart }: ExpeditionProps) => {
           <div className="selectable-grid">
             {selectableUnits.map((unit) => {
               const recommended = recommendedUnitIds.has(unit.id);
+              const trait = getUnitTrait(unit);
               return (
                 <button
                   key={unit.id}
@@ -203,7 +212,7 @@ const Expedition = ({ game, now, onStart }: ExpeditionProps) => {
                   <small>
                     Lv{unit.level} / HP {unit.currentHp} / 戦力 {getUnitScore(unit)}
                   </small>
-                  {recommended && <em>おすすめ</em>}
+                  <em>{recommended ? `おすすめ / ${trait.name}` : trait.name}</em>
                 </button>
               );
             })}

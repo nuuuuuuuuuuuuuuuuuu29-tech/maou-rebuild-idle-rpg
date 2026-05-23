@@ -17,6 +17,7 @@ import type {
 import { getDungeonMasteryInfo } from "./mastery";
 import { createUnit, makeId } from "./progression";
 import { getRareDropMasteryBonus, isRareDropItem } from "./rareDrops";
+import { getPartyTraitModifiers } from "./traits";
 
 interface BattleSimulationResult {
   record: ExpeditionRecord;
@@ -398,10 +399,12 @@ const collectRewardItems = (
   rewardMultiplier: number,
   lootBonus: number,
   rareDropBonus = 0,
+  materialLootBonus = 0,
 ) => {
   const found: RewardItemStack[] = [];
   rewards.forEach((reward) => {
-    const chance = clamp(reward.chance + lootBonus + (isRareDropItem(reward.itemId) ? rareDropBonus : 0), 0.05, 0.92);
+    const rareDrop = isRareDropItem(reward.itemId);
+    const chance = clamp(reward.chance + lootBonus + (rareDrop ? rareDropBonus : materialLootBonus), 0.05, 0.92);
     if (Math.random() <= chance) {
       const baseQuantity = randomInt(reward.min, reward.max);
       const quantity = Math.max(1, Math.round(baseQuantity * rewardMultiplier));
@@ -458,16 +461,19 @@ export const simulateExpedition = (
   let workingParty: GameUnit[] = party;
   let status: ExpeditionRecord["status"] = "success";
   let logIndex = 2;
+  const traitModifiers = getPartyTraitModifiers(party);
   const successBonus =
     strategy.successBonus + (itemEffect?.successBonus ?? 0) + (dungeon.id === "ash-border-village" ? 0.28 : 0);
-  const damageMultiplier = strategy.damageMultiplier * (itemEffect?.damageMultiplier ?? 1);
+  const damageMultiplier = strategy.damageMultiplier * (itemEffect?.damageMultiplier ?? 1) * traitModifiers.damageMultiplier;
   const rewardMultiplier = strategy.rewardMultiplier * (itemEffect?.rewardMultiplier ?? 1);
+  const goldMultiplier = rewardMultiplier * traitModifiers.goldMultiplier;
   const lootBonus = strategy.lootBonus + (itemEffect?.lootBonus ?? 0);
 
   for (let floor = 1; floor <= dungeon.floors; floor += 1) {
     const enemy = dungeon.enemies[(floor - 1) % dungeon.enemies.length];
-    const trapChance =
+    const baseTrapChance =
       active.strategy === "safe" ? 0.12 : active.strategy === "rush" ? 0.34 : active.strategy === "loot" ? 0.28 : 0.2;
+    const trapChance = clamp(baseTrapChance - traitModifiers.trapAvoidance, 0.04, 0.5);
     if (Math.random() < trapChance && workingParty.some((unit) => unit.currentHp > 0)) {
       const trapDamage = Math.max(1, (dungeon.difficulty * randomRange(2.2, 5.5) + floor) * damageMultiplier);
       workingParty = applyDamage(workingParty, trapDamage);
@@ -478,7 +484,9 @@ export const simulateExpedition = (
       logIndex += 1;
     }
 
-    const alivePower = workingParty.filter((unit) => unit.currentHp > 0).reduce((sum, unit) => sum + unitPower(unit), 0);
+    const alivePower =
+      workingParty.filter((unit) => unit.currentHp > 0).reduce((sum, unit) => sum + unitPower(unit), 0) *
+      traitModifiers.normalPowerMultiplier;
     const enemyScore = enemyPower(enemy, dungeon.difficulty);
     const levelGap = state.demonLordLevel - dungeon.recommendedLevel;
     const chance = clamp(0.58 + (alivePower - enemyScore) / (enemyScore * 2.6) + levelGap * 0.04 + successBonus, 0.12, 0.96);
@@ -506,7 +514,7 @@ export const simulateExpedition = (
       );
       logIndex += 1;
     } else {
-      const damage = Math.max(5, enemy.atk * randomRange(1.55, 2.25) * damageMultiplier);
+      const damage = Math.max(5, enemy.atk * randomRange(1.55, 2.25) * damageMultiplier * traitModifiers.failureDamageMultiplier);
       workingParty = applyDamage(workingParty, damage);
       const allDown = workingParty.every((unit) => unit.currentHp <= 0);
       status = allDown || roll > chance + 0.18 ? "failure" : "retreat";
@@ -528,7 +536,9 @@ export const simulateExpedition = (
   }
 
   if (status === "success") {
-    const alivePower = workingParty.filter((unit) => unit.currentHp > 0).reduce((sum, unit) => sum + unitPower(unit), 0);
+    const alivePower =
+      workingParty.filter((unit) => unit.currentHp > 0).reduce((sum, unit) => sum + unitPower(unit), 0) *
+      traitModifiers.bossPowerMultiplier;
     const bossScore = enemyPower(dungeon.boss, dungeon.difficulty) * 1.18;
     const chance = clamp(
       0.54 + (alivePower - bossScore) / (bossScore * 2.35) + (state.demonLordLevel - dungeon.recommendedLevel) * 0.05 + successBonus,
@@ -545,7 +555,7 @@ export const simulateExpedition = (
       logs.push(makeLog(active, logIndex, "success", `${dungeon.boss.name}を退けた。${pick(flavor.victory)}`));
       logIndex += 1;
     } else {
-      const damage = Math.max(8, dungeon.boss.atk * randomRange(1.85, 2.65) * damageMultiplier);
+      const damage = Math.max(8, dungeon.boss.atk * randomRange(1.85, 2.65) * damageMultiplier * traitModifiers.failureDamageMultiplier);
       workingParty = applyDamage(workingParty, damage);
       const allDown = workingParty.every((unit) => unit.currentHp <= 0);
       status = allDown || roll > chance + 0.12 ? "failure" : "retreat";
@@ -566,14 +576,14 @@ export const simulateExpedition = (
   }
 
   const rewardScale = status === "success" ? 1 : status === "retreat" ? 0.45 : 0.3;
-  const gold = Math.round(randomRange(dungeon.goldMin, dungeon.goldMax) * rewardMultiplier * rewardScale);
+  const gold = Math.round(randomRange(dungeon.goldMin, dungeon.goldMax) * goldMultiplier * rewardScale);
   const demonExp = Math.round(dungeon.demonExp * (status === "success" ? 1 : status === "retreat" ? 0.45 : 0.3));
   const unitExp = Math.round(dungeon.unitExp * strategy.unitExpMultiplier * (status === "success" ? 1 : status === "retreat" ? 0.55 : 0.4));
   const territory = status === "success" ? dungeon.territoryReward : 0;
   const items =
     status === "success"
-      ? collectRewardItems(dungeon.rewards, rewardMultiplier, lootBonus, rareDropMasteryBonus)
-      : collectRewardItems(dungeon.rewards, 0.5, lootBonus - 0.2).slice(0, 1);
+      ? collectRewardItems(dungeon.rewards, rewardMultiplier, lootBonus, rareDropMasteryBonus, traitModifiers.materialLootBonus)
+      : collectRewardItems(dungeon.rewards, 0.5, lootBonus - 0.2, 0, traitModifiers.materialLootBonus).slice(0, 1);
 
   if (items.length > 0) {
     logs.push(makeLog(active, logIndex, "loot", `${pick(flavor.treasure)} 獲得: ${itemNames(items)}。`));

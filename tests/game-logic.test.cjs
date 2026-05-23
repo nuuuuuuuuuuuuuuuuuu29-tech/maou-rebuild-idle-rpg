@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const { createInitialState } = require("../.tmp-tests/src/lib/progression.js");
 const { advanceGame, claimCollectionReward, startExpedition } = require("../.tmp-tests/src/lib/expedition.js");
+const { simulateExpedition } = require("../.tmp-tests/src/lib/battle.js");
 const { getDungeonMasteryLevel } = require("../.tmp-tests/src/lib/mastery.js");
 const {
   getRareDropCandidates,
@@ -10,6 +11,8 @@ const {
   isRareDropItem,
 } = require("../.tmp-tests/src/lib/rareDrops.js");
 const { DEFAULT_TITLE_ID, TITLES } = require("../.tmp-tests/src/data/titles.js");
+const { UNIT_TEMPLATES } = require("../.tmp-tests/src/data/units.js");
+const { UNIT_TRAIT_IDS } = require("../.tmp-tests/src/data/traits.js");
 const {
   canSelectTitle,
   getSelectedTitle,
@@ -17,6 +20,11 @@ const {
   getUnlockedTitles,
   normalizeSelectedTitleId,
 } = require("../.tmp-tests/src/lib/titles.js");
+const {
+  TRAIT_LIMITS,
+  getPartyTraitModifiers,
+  getUnitTrait,
+} = require("../.tmp-tests/src/lib/traits.js");
 
 const titleById = (id) => TITLES.find((title) => title.id === id);
 
@@ -50,6 +58,44 @@ const withFixedRandom = (value, fn) => {
     Math.random = originalRandom;
   }
 };
+
+const makeStrongUnit = (templateId, id = `unit-${templateId}`) => ({
+  id,
+  templateId,
+  name: id,
+  species: "Test",
+  emoji: "◆",
+  rarity: "common",
+  level: 12,
+  exp: 0,
+  expToNext: 999,
+  maxHp: 999,
+  currentHp: 999,
+  atk: 260,
+  def: 240,
+  spd: 200,
+  status: "idle",
+});
+
+const simulateOneUnit = (templateId, randomValue = 0.01) =>
+  withFixedRandom(randomValue, () => {
+    const unit = makeStrongUnit(templateId);
+    const state = {
+      ...createInitialState(),
+      demonLordLevel: 10,
+      maxPartySize: 4,
+      units: [unit],
+    };
+    return simulateExpedition(state, {
+      id: `expedition-${templateId}`,
+      dungeonId: "ash-border-village",
+      unitIds: [unit.id],
+      strategy: "balanced",
+      startedAt: 1000,
+      endsAt: 31_000,
+      durationSeconds: 30,
+    });
+  });
 
 test("遠征開始でアクティブ遠征とユニット状態が更新される", () => {
   const state = createInitialState();
@@ -353,4 +399,93 @@ test("獲得済み称号のみ選択可能として扱う", () => {
   assert.equal(canSelectTitle(progressed, "first-expedition-title"), true);
   assert.equal(normalizeSelectedTitleId(progressed, "first-expedition-title"), "first-expedition-title");
   assert.notEqual(normalizeSelectedTitleId(progressed, "not-real-title"), "not-real-title");
+});
+
+test("全UnitTemplateに種族固定特性が解決できる", () => {
+  UNIT_TEMPLATES.forEach((template) => {
+    assert.ok(UNIT_TRAIT_IDS[template.id], `${template.id} has trait mapping`);
+    const trait = getUnitTrait(template.id);
+    assert.ok(trait.id);
+    assert.ok(trait.name);
+  });
+});
+
+test("特性効果を集計し、上限値を超えない", () => {
+  const goldUnits = Array.from({ length: 5 }, (_, index) => makeStrongUnit("cinder-goblin", `gold-${index}`));
+  const shieldUnits = Array.from({ length: 5 }, (_, index) => makeStrongUnit("bone-vanguard", `shield-${index}`));
+  const mixed = getPartyTraitModifiers([makeStrongUnit("cinder-goblin"), makeStrongUnit("bone-vanguard")]);
+  const cappedGold = getPartyTraitModifiers(goldUnits);
+  const cappedShield = getPartyTraitModifiers(shieldUnits);
+
+  assert.equal(mixed.goldBonus, 0.02);
+  assert.equal(mixed.damageReduction, 0.03);
+  assert.equal(cappedGold.goldBonus, TRAIT_LIMITS.goldBonus);
+  assert.equal(cappedShield.damageReduction, TRAIT_LIMITS.damageReduction);
+  assert.equal(cappedGold.goldMultiplier, 1 + TRAIT_LIMITS.goldBonus);
+  assert.equal(cappedShield.damageMultiplier, 1 - TRAIT_LIMITS.damageReduction);
+});
+
+test("金額補正が遠征報酬に控えめに反映される", () => {
+  const goldResult = simulateOneUnit("cinder-goblin", 0.01);
+  const controlResult = simulateOneUnit("bone-vanguard", 0.01);
+
+  assert.equal(goldResult.record.status, "success");
+  assert.equal(controlResult.record.status, "success");
+  assert.ok(goldResult.rewards.gold > controlResult.rewards.gold);
+  assert.ok(goldResult.rewards.gold - controlResult.rewards.gold <= 2);
+});
+
+test("被ダメージ軽減が戦闘中だけ反映され、永続ステータスは書き換えない", () => {
+  const simulateWeakRun = (templateId) =>
+    withFixedRandom(0.5, () => {
+      const unit = {
+        ...makeStrongUnit(templateId),
+        level: 1,
+        maxHp: 120,
+        currentHp: 120,
+        atk: 10,
+        def: 5,
+        spd: 5,
+      };
+      const state = {
+        ...createInitialState(),
+        demonLordLevel: 1,
+        units: [unit],
+      };
+      return simulateExpedition(state, {
+        id: `expedition-${templateId}`,
+        dungeonId: "gray-vein-mine",
+        unitIds: [unit.id],
+        strategy: "rush",
+        startedAt: 1000,
+        endsAt: 31_000,
+        durationSeconds: 30,
+      });
+    });
+
+  const shieldResult = simulateWeakRun("bone-vanguard");
+  const controlResult = simulateWeakRun("cinder-goblin");
+  const shieldUnit = shieldResult.partyUpdates[0];
+  const controlUnit = controlResult.partyUpdates[0];
+
+  assert.ok(shieldUnit.currentHp > controlUnit.currentHp);
+  assert.equal(shieldUnit.atk, controlUnit.atk);
+  assert.equal(shieldUnit.def, controlUnit.def);
+  assert.equal(shieldUnit.spd, controlUnit.spd);
+});
+
+test("罠回避、ボス戦補正、通常戦補正を分離して計算できる", () => {
+  const shadow = getPartyTraitModifiers([makeStrongUnit("dusk-batkin")]);
+  const breaker = getPartyTraitModifiers([makeStrongUnit("mire-ogre")]);
+  const quick = getPartyTraitModifiers([makeStrongUnit("spark-imp")]);
+
+  assert.equal(shadow.trapAvoidance, 0.03);
+  assert.equal(breaker.bossPowerBonus, 0.02);
+  assert.equal(breaker.normalPowerBonus, 0);
+  assert.equal(quick.normalPowerBonus, 0.01);
+  assert.equal(quick.bossPowerBonus, 0);
+});
+
+test("GameState.versionはv0.6でも5のまま", () => {
+  assert.equal(createInitialState().version, 5);
 });
