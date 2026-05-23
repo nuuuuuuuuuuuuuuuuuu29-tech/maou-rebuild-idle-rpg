@@ -4,6 +4,7 @@ import { getItemDefinition, supportItems } from "../data/items";
 import { STRATEGIES } from "../data/strategies";
 import { formatSeconds, getActiveProgress, getAdjustedDuration } from "../lib/expedition";
 import { getFirstPlayableDungeon, getRecommendedUnits, getUnitScore } from "../lib/guidance";
+import { formatDungeonMasteryBonus, getDungeonMasteryInfo } from "../lib/mastery";
 import type { GameState, GameUnit, StrategyId } from "../types/game";
 
 interface ExpeditionProps {
@@ -22,6 +23,7 @@ const Expedition = ({ game, now, onStart }: ExpeditionProps) => {
   const active = game.activeExpedition;
   const progress = getActiveProgress(game, now);
   const selectedDungeon = DUNGEONS.find((dungeon) => dungeon.id === dungeonId) ?? DUNGEONS[0];
+  const selectedMastery = getDungeonMasteryInfo(game, selectedDungeon.id);
   const selectableUnits = useMemo(() => game.units.filter((unit) => unit.status === "idle"), [game.units]);
   const recommendedUnits = useMemo(() => getRecommendedUnits(game), [game]);
   const recommendedUnitIds = useMemo(() => new Set(recommendedUnits.map((unit) => unit.id)), [recommendedUnits]);
@@ -114,6 +116,7 @@ const Expedition = ({ game, now, onStart }: ExpeditionProps) => {
         {DUNGEONS.map((dungeon) => {
           const locked = dungeon.unlockLevel > game.demonLordLevel;
           const recommended = isFirstRun && dungeon.id === firstUnlocked;
+          const mastery = getDungeonMasteryInfo(game, dungeon.id);
           return (
             <button
               key={dungeon.id}
@@ -130,6 +133,7 @@ const Expedition = ({ game, now, onStart }: ExpeditionProps) => {
                   ? `魔王Lv${dungeon.unlockLevel}で解放`
                   : `推奨Lv ${dungeon.recommendedLevel} / ${dungeon.floors}階 / ${formatSeconds(dungeon.durationSeconds)}`}
               </small>
+              {!locked && <small>熟練度Lv{mastery.level} / 踏破{mastery.clearCount}回</small>}
             </button>
           );
         })}
@@ -148,6 +152,10 @@ const Expedition = ({ game, now, onStart }: ExpeditionProps) => {
           <span>選択中 {selectedUnitIds.length}/{game.maxPartySize}体</span>
           <span>部隊戦力 {selectedScore}</span>
           <span>{strategyId === "balanced" ? "初回向き" : "作戦変更中"}</span>
+          <span>熟練度Lv{selectedMastery.level}</span>
+          <span>踏破{selectedMastery.clearCount}回</span>
+          <span>{formatDungeonMasteryBonus(selectedMastery.level)}</span>
+          <span>{selectedMastery.nextTarget ? `次Lvまで${selectedMastery.remainingToNext}回` : "熟練度最大"}</span>
         </div>
 
         <div className="form-block">

@@ -8,6 +8,7 @@ import type {
   BossDefeatRecord,
   CollectionState,
   CollectionRewardState,
+  DungeonMasteryRecord,
   ExpeditionRecord,
   ExpeditionStatus,
   GameState,
@@ -21,9 +22,10 @@ import type {
   UnitStatus,
 } from "../types/game";
 import { deriveBossRecordsFromRecords, evaluateAchievements, mergeBossRecords } from "./achievements";
+import { deriveDungeonMasteryFromRecords, mergeDungeonMasteryRecords } from "./mastery";
 import { createInitialState, createUnit } from "./progression";
 
-export const SAVE_VERSION = 3;
+export const SAVE_VERSION = 4;
 export const STORAGE_KEY = "maou-rebuild-state-v1";
 
 const BACKUP_PREFIX = "maou-rebuild-state-backup";
@@ -176,6 +178,12 @@ const migrateV2ToV3 = (source: UnknownRecord): UnknownRecord => ({
   collectionRewards: isRecord(source.collectionRewards) ? source.collectionRewards : { claimedIds: [] },
 });
 
+const migrateV3ToV4 = (source: UnknownRecord): UnknownRecord => ({
+  ...source,
+  version: 4,
+  dungeonMastery: Array.isArray(source.dungeonMastery) ? source.dungeonMastery : [],
+});
+
 const migrateSaveData = (source: UnknownRecord) => {
   const fromVersion = typeof source.version === "number" ? source.version : 1;
 
@@ -193,6 +201,9 @@ const migrateSaveData = (source: UnknownRecord) => {
   }
   if (fromVersion < 3) {
     data = migrateV2ToV3(data);
+  }
+  if (fromVersion < 4) {
+    data = migrateV3ToV4(data);
   }
 
   return {
@@ -515,6 +526,24 @@ const normalizeBossRecords = (bossRecords: unknown, records: ExpeditionRecord[])
   return mergeBossRecords(explicit, deriveBossRecordsFromRecords(records));
 };
 
+const normalizeDungeonMastery = (
+  dungeonMastery: unknown,
+  records: ExpeditionRecord[],
+  bossRecords: BossDefeatRecord[],
+): DungeonMasteryRecord[] => {
+  const explicit = Array.isArray(dungeonMastery)
+    ? dungeonMastery.flatMap((entry) => {
+        if (!isRecord(entry) || typeof entry.dungeonId !== "string" || !DUNGEON_IDS.has(entry.dungeonId)) {
+          return [];
+        }
+        const clearCount = integerAtLeast(entry.clearCount, 0, 0);
+        return clearCount > 0 ? [{ dungeonId: entry.dungeonId, clearCount }] : [];
+      })
+    : [];
+
+  return mergeDungeonMasteryRecords(explicit, deriveDungeonMasteryFromRecords(records, bossRecords));
+};
+
 const normalizeCollectionRewards = (
   collectionRewards: unknown,
   fallback: CollectionRewardState,
@@ -548,6 +577,7 @@ const normalizeGameState = (saved: UnknownRecord): GameState => {
     activeExpedition?.dungeonId,
   );
   const bossRecords = normalizeBossRecords(saved.bossRecords, records);
+  const dungeonMastery = normalizeDungeonMastery(saved.dungeonMastery, records, bossRecords);
 
   const normalized: GameState = {
     ...fallback,
@@ -568,6 +598,7 @@ const normalizeGameState = (saved: UnknownRecord): GameState => {
     collection,
     achievements: normalizeAchievements(saved.achievements, fallback.achievements),
     bossRecords,
+    dungeonMastery,
     collectionRewards: normalizeCollectionRewards(saved.collectionRewards, fallback.collectionRewards),
     tutorialDismissed: typeof saved.tutorialDismissed === "boolean" ? saved.tutorialDismissed : fallback.tutorialDismissed,
     createdAt: numberOr(saved.createdAt, fallback.createdAt),

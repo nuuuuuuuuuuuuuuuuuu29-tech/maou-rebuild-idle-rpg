@@ -8,6 +8,7 @@ import {
   getCollectionRewardProgress,
   getTotalBossDefeats,
 } from "../lib/achievements";
+import { formatDungeonMasteryBonus, getDungeonMasteryInfo } from "../lib/mastery";
 import type { CollectionRewardContent, GameState } from "../types/game";
 
 interface CollectionProps {
@@ -47,6 +48,7 @@ const Collection = ({ game, onClaimReward }: CollectionProps) => {
   );
   const claimedRewards = new Set(game.collectionRewards.claimedIds);
   const bossRecords = new Map(game.bossRecords.map((record) => [record.dungeonId, record]));
+  const totalDungeonClears = game.dungeonMastery.reduce((total, record) => total + record.clearCount, 0);
 
   return (
     <section className="screen">
@@ -75,6 +77,10 @@ const Collection = ({ game, onClaimReward }: CollectionProps) => {
             <strong>
               {game.collectionRewards.claimedIds.length}/{COLLECTION_REWARDS.length}
             </strong>
+          </article>
+          <article className="reward-metric">
+            <span>熟練踏破</span>
+            <strong>{totalDungeonClears}回</strong>
           </article>
         </div>
       </section>
@@ -246,11 +252,19 @@ const Collection = ({ game, onClaimReward }: CollectionProps) => {
         <div className="collection-grid">
           {DUNGEONS.map((dungeon) => {
             const known = game.collection.dungeons.includes(dungeon.id);
+            const mastery = getDungeonMasteryInfo(game, dungeon.id);
             return (
               <article key={dungeon.id} className="collection-card">
                 <span className="large-icon">{known ? dungeon.icon : "??"}</span>
                 <strong>{known ? dungeon.name : "？？？"}</strong>
                 <small>{known ? dungeon.description : "未発見"}</small>
+                {known && (
+                  <small>
+                    熟練度Lv{mastery.level} / 踏破{mastery.clearCount}回 /{" "}
+                    {mastery.nextTarget ? `次Lvまで${mastery.remainingToNext}回` : "熟練度最大"} /{" "}
+                    {formatDungeonMasteryBonus(mastery.level)}
+                  </small>
+                )}
               </article>
             );
           })}

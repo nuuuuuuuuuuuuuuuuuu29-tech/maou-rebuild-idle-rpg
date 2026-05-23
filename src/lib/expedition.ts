@@ -6,6 +6,7 @@ import { getUnitTemplate } from "../data/units";
 import type { GameState, StrategyId } from "../types/game";
 import { evaluateAchievements, getCollectionRewardProgress, updateBossRecordsForRecord } from "./achievements";
 import { simulateExpedition } from "./battle";
+import { formatDungeonMasteryBonus, getDungeonMasteryInfo, updateDungeonMasteryForRecord } from "./mastery";
 import {
   addInventoryStacks,
   applyDemonExperience,
@@ -100,6 +101,14 @@ const finishExpedition = (state: GameState, now: number): GameState => {
 
   const active = state.activeExpedition;
   const simulation = simulateExpedition(state, active);
+  const masteryBefore = getDungeonMasteryInfo(state, active.dungeonId);
+  const masteryApplies = simulation.record.status === "success" && masteryBefore.level > 0;
+  const goldWithMastery = masteryApplies
+    ? Math.round(simulation.rewards.gold * masteryBefore.bonus.goldMultiplier)
+    : simulation.rewards.gold;
+  const unitExpWithMastery = masteryApplies
+    ? Math.round(simulation.rewards.unitExp * masteryBefore.bonus.unitExpMultiplier)
+    : simulation.rewards.unitExp;
   const participantIds = new Set(active.unitIds);
   const partyById = new Map(simulation.partyUpdates.map((unit) => [unit.id, unit]));
   const inventoryResult = addInventoryStacks(state.inventory, simulation.rewards.items, state.itemCapacity);
@@ -113,6 +122,8 @@ const finishExpedition = (state: GameState, now: number): GameState => {
   }));
   const rewards = {
     ...simulation.rewards,
+    gold: goldWithMastery,
+    unitExp: unitExpWithMastery,
     items: inventoryResult.accepted,
     rescuedUnits: acceptedRescueSummaries,
   };
@@ -153,13 +164,25 @@ const finishExpedition = (state: GameState, now: number): GameState => {
           },
         ]
       : [];
+  const masteryBonusLogs =
+    masteryApplies && (goldWithMastery > simulation.rewards.gold || unitExpWithMastery > simulation.rewards.unitExp)
+      ? [
+          {
+            id: makeId("log"),
+            at: active.endsAt,
+            type: "loot" as const,
+            message: `熟練度Lv${masteryBefore.level}の地の利が働いた。${formatDungeonMasteryBonus(masteryBefore.level)}。`,
+          },
+        ]
+      : [];
 
   const record = {
     ...simulation.record,
     endedAt: active.endsAt,
     rewards,
-    logs: [...simulation.record.logs, ...levelUpLogs, ...extraLogs],
+    logs: [...simulation.record.logs, ...levelUpLogs, ...extraLogs, ...masteryBonusLogs],
   };
+  const masteryResult = updateDungeonMasteryForRecord(state.dungeonMastery, record);
 
   const discoveredItems = [
     ...inventoryResult.accepted.map((item) => item.itemId),
@@ -174,6 +197,7 @@ const finishExpedition = (state: GameState, now: number): GameState => {
     gold: state.gold + rewards.gold,
     territoryLiberation: Math.min(100, state.territoryLiberation + rewards.territory),
     records: [record, ...state.records].slice(0, 40),
+    dungeonMastery: masteryResult.records,
     collection: mergeCollection(state.collection, {
       monsters: discoveredMonsters,
       items: discoveredItems,
@@ -190,6 +214,16 @@ const finishExpedition = (state: GameState, now: number): GameState => {
   next = achievementResult.state;
 
   const metaLogs = [
+    ...(masteryResult.changed && masteryResult.nextLevel > masteryResult.previousLevel
+      ? [
+          {
+            id: makeId("log"),
+            at: active.endsAt,
+            type: "success" as const,
+            message: `熟練度上昇: ${record.dungeonName} がLv${masteryResult.nextLevel}に到達。踏破${masteryResult.clearCount}回、次回以降 ${formatDungeonMasteryBonus(masteryResult.nextLevel)}。`,
+          },
+        ]
+      : []),
     ...(bossResult.firstDefeat
       ? [
           {

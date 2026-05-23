@@ -193,6 +193,11 @@ export interface BossDefeatRecord {
   lastDefeatedAt?: number;
 }
 
+export interface DungeonMasteryRecord {
+  dungeonId: string;
+  clearCount: number;
+}
+
 export type CollectionRewardTarget = "monsters" | "items" | "dungeons" | "total";
 
 export interface CollectionRewardContent {
@@ -275,6 +280,7 @@ export interface GameState {
   collection: CollectionState;
   achievements: AchievementState;
   bossRecords: BossDefeatRecord[];
+  dungeonMastery: DungeonMasteryRecord[];
   collectionRewards: CollectionRewardState;
   tutorialDismissed?: boolean;
   createdAt: number;

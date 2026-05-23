@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const { createInitialState } = require("../.tmp-tests/src/lib/progression.js");
 const { advanceGame, claimCollectionReward, startExpedition } = require("../.tmp-tests/src/lib/expedition.js");
+const { getDungeonMasteryLevel } = require("../.tmp-tests/src/lib/mastery.js");
 
 const withFixedRandom = (value, fn) => {
   const originalRandom = Math.random;
@@ -57,8 +58,54 @@ test("遠征完了で報酬、経験値、実績、ボス討伐記録が反映�
     assert.equal(bossRecord.defeats, 1);
     assert.equal(bossRecord.firstDefeatedAt, record.endedAt);
     assert.equal(bossRecord.lastDefeatedAt, record.endedAt);
+    assert.equal(finished.dungeonMastery.find((entry) => entry.dungeonId === "ash-border-village").clearCount, 1);
     assert.ok(record.logs.some((entry) => entry.message.includes("MVP")));
   });
+});
+
+test("遠征失敗時はダンジョン熟練度を増やさない", () => {
+  withFixedRandom(0.99, () => {
+    const state = createInitialState();
+    const unitId = state.units[0].id;
+    const started = startExpedition(state, "ash-border-village", [unitId], "balanced");
+    assert.equal(started.ok, true);
+
+    const finished = advanceGame(started.state, started.state.activeExpedition.endsAt + 1);
+    const mastery = finished.dungeonMastery.find((entry) => entry.dungeonId === "ash-border-village");
+
+    assert.notEqual(finished.records[0].status, "success");
+    assert.equal(mastery, undefined);
+  });
+});
+
+test("ダンジョン熟練度Lvをクリア回数から計算する", () => {
+  assert.equal(getDungeonMasteryLevel(0), 0);
+  assert.equal(getDungeonMasteryLevel(1), 1);
+  assert.equal(getDungeonMasteryLevel(4), 1);
+  assert.equal(getDungeonMasteryLevel(5), 2);
+  assert.equal(getDungeonMasteryLevel(10), 3);
+  assert.equal(getDungeonMasteryLevel(25), 4);
+  assert.equal(getDungeonMasteryLevel(50), 5);
+});
+
+test("ダンジョン熟練度ボーナスが成功時の金額とユニット経験値に反映される", () => {
+  const runSuccess = (state) =>
+    withFixedRandom(0.01, () => {
+      const unitId = state.units[0].id;
+      const started = startExpedition(state, "ash-border-village", [unitId], "balanced");
+      assert.equal(started.ok, true);
+      return advanceGame(started.state, started.state.activeExpedition.endsAt + 1);
+    });
+
+  const normal = runSuccess(createInitialState());
+  const mastered = runSuccess({
+    ...createInitialState(),
+    dungeonMastery: [{ dungeonId: "ash-border-village", clearCount: 5 }],
+  });
+
+  assert.equal(mastered.records[0].rewards.gold, Math.round(normal.records[0].rewards.gold * 1.04));
+  assert.equal(mastered.records[0].rewards.unitExp, Math.round(normal.records[0].rewards.unitExp * 1.02));
+  assert.equal(mastered.dungeonMastery.find((entry) => entry.dungeonId === "ash-border-village").clearCount, 6);
 });
 
 test("図鑑報酬を受け取り、二重受け取りを防止する", () => {
