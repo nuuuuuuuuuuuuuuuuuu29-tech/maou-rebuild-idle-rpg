@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "test": "tsc -p tsconfig.test.json && node scripts/prepare-tests.cjs && node --test tests/game-logic.test.cjs tests/storage.test.cjs",
+    "test": "tsc -p tsconfig.test.json && node scripts/prepare-tests.cjs && node --test tests/game-logic.test.cjs tests/storage.test.cjs tests/simulation.test.cjs",
+    "sim:balance": "tsc -p tsconfig.test.json && node scripts/prepare-tests.cjs && node scripts/simulate-balance.cjs",
     "preview": "vite preview"
   },
   "dependencies": {
