@@ -53,6 +53,13 @@
 - 新しい画面、主要機能、保存仕様、開発手順を追加したらREADMEも更新する。
 - READMEには未実装の拡張余地も残し、今後の作業を依頼しやすくする。
 
+## Release Candidate Docs
+
+- v1.0候補の公開前整理では、ゲーム本体の挙動、UI、バランス、セーブ構造を変更しない。
+- 公開前確認の導線は `docs/release-checklist.md` と `docs/manual-qa.md` にまとめる。
+- プレイヤー向けの現在機能は `docs/release-notes-v1.0-rc.md` に簡潔にまとめる。
+- Windows PowerShell環境では `npm` がブロックされる場合があるため、検証手順には `npm.cmd` も明記する。
+
 ## Final Response Policy
 
 作業完了時は、次を簡潔にまとめる。
