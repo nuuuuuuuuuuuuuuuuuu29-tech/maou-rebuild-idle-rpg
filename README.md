@@ -10,7 +10,7 @@
 - 実装済み範囲は v0.9「遠征準備の危険度・推奨Lv警告UI」までです。
 - `GameState.version` は `5` です。
 - localStorageの保存構造は安定しています。
-- `package.json` の `version` は現在 `0.1.0` のままです。これはnpmパッケージ用の内部メタデータとして扱い、ゲーム側のv1.0候補とは分けています。正式なv1.0 RCタグを切る段階で `1.0.0-rc.1` へ変更する案が自然です。
+- `package.json` の `version` は `1.0.0-rc.1` です。v1.0 release candidate のメタデータとして扱います。
 
 ## ゲームの目的
 
