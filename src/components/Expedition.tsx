@@ -59,6 +59,10 @@ const Expedition = ({ game, now, onStart }: ExpeditionProps) => {
   });
   const shouldHighlightUnits = guideState.highlightTarget === "units";
   const shouldHighlightStart = guideState.highlightTarget === "start";
+  const startRequirement =
+    selectedUnitIds.length === 0
+      ? "不足条件: 出撃ユニットを1体以上選択してください。"
+      : "準備完了: このまま遠征開始できます。";
 
   useEffect(() => {
     setSelectedUnitIds((previous) => {
@@ -341,6 +345,7 @@ const Expedition = ({ game, now, onStart }: ExpeditionProps) => {
         >
           {guideState.ready ? "準備完了：遠征開始" : "配下を選ぶと開始できます"}
         </button>
+        <p className={guideState.ready ? "start-requirement is-ready" : "start-requirement"}>{startRequirement}</p>
       </section>
     </section>
   );

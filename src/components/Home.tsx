@@ -23,6 +23,10 @@ const Home = ({ game, now, onNameChange, onNavigate, onDismissTutorial }: HomePr
   const goals = getGoals(game);
   const selectedTitle = getSelectedTitle(game);
   const showTutorial = !game.tutorialDismissed && game.records.length === 0 && !game.activeExpedition;
+  const currentSummary =
+    active && activeDungeon
+      ? `${activeDungeon.name}へ遠征中。残り${formatSeconds(progress.remainingSeconds)}。`
+      : `魔王Lv${game.demonLordLevel} / 所持金${game.gold}G / 配下${game.units.length}体。`;
 
   return (
     <section className="screen">
@@ -49,6 +53,17 @@ const Home = ({ game, now, onNameChange, onNavigate, onDismissTutorial }: HomePr
           </button>
         </div>
       </div>
+
+      <section className="home-status-strip" aria-label="現在の状況と次の行動">
+        <article>
+          <span>現在の状況</span>
+          <strong>{currentSummary}</strong>
+        </article>
+        <article>
+          <span>次にできること</span>
+          <strong>{nextAction.title}</strong>
+        </article>
+      </section>
 
       {showTutorial && (
         <section className="panel tutorial-panel">
