@@ -19,6 +19,7 @@ const {
   getRecommendedAction,
   getRiskReasons,
 } = require("../.tmp-tests/src/lib/expeditionRisk.js");
+const { getExpeditionGuideState } = require("../.tmp-tests/src/lib/expeditionGuide.js");
 const {
   canSelectTitle,
   getSelectedTitle,
@@ -543,6 +544,51 @@ test("推奨Lv不足とおすすめ行動を危険度理由として返せる", 
 
   assert.ok(getRiskReasons(risk).some((reason) => reason.includes("推奨Lv")));
   assert.ok(getRecommendedAction(risk).length > 0);
+});
+
+test("遠征準備ガイドは未選択状態から次の操作を返す", () => {
+  const guide = getExpeditionGuideState({
+    dungeonSelected: false,
+    selectedUnitCount: 0,
+    strategySelected: false,
+    selectedDungeonName: "未選択",
+    firstDungeonName: "煤けた境界村",
+    strategyName: "未選択",
+    isFirstRun: true,
+  });
+
+  assert.equal(guide.currentStep, "dungeon");
+  assert.equal(guide.highlightTarget, "dungeon");
+  assert.equal(guide.ready, false);
+  assert.ok(guide.body.includes("煤けた境界村"));
+});
+
+test("遠征準備ガイドは配下未選択と準備完了を区別する", () => {
+  const noUnit = getExpeditionGuideState({
+    dungeonSelected: true,
+    selectedUnitCount: 0,
+    strategySelected: true,
+    selectedDungeonName: "煤けた境界村",
+    firstDungeonName: "煤けた境界村",
+    strategyName: "バランス重視",
+    isFirstRun: true,
+  });
+  const ready = getExpeditionGuideState({
+    dungeonSelected: true,
+    selectedUnitCount: 1,
+    strategySelected: true,
+    selectedDungeonName: "煤けた境界村",
+    firstDungeonName: "煤けた境界村",
+    strategyName: "バランス重視",
+    isFirstRun: true,
+  });
+
+  assert.equal(noUnit.currentStep, "units");
+  assert.equal(noUnit.ready, false);
+  assert.equal(ready.currentStep, "start");
+  assert.equal(ready.highlightTarget, "start");
+  assert.equal(ready.ready, true);
+  assert.equal(ready.steps.find((step) => step.id === "item").status, "optional");
 });
 
 test("GameState.versionはv0.6でも5のまま", () => {

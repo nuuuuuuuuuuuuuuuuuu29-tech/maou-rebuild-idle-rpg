@@ -3,6 +3,7 @@ import { DUNGEONS } from "../data/dungeons";
 import { getItemDefinition, supportItems } from "../data/items";
 import { STRATEGIES } from "../data/strategies";
 import { formatSeconds, getActiveProgress, getAdjustedDuration } from "../lib/expedition";
+import { getExpeditionGuideState } from "../lib/expeditionGuide";
 import { evaluateExpeditionRisk, getRecommendedAction, getRiskLabel, getRiskReasons } from "../lib/expeditionRisk";
 import { getFirstPlayableDungeon, getRecommendedUnits, getUnitScore } from "../lib/guidance";
 import { formatDungeonMasteryBonus, getDungeonMasteryInfo } from "../lib/mastery";
@@ -46,6 +47,18 @@ const Expedition = ({ game, now, onStart }: ExpeditionProps) => {
   const expeditionRisk = evaluateExpeditionRisk(game, selectedDungeon, selectedUnits, strategyId);
   const riskReasons = getRiskReasons(expeditionRisk).slice(0, 2);
   const riskAction = getRecommendedAction(expeditionRisk);
+  const selectedStrategy = STRATEGIES.find((strategy) => strategy.id === strategyId);
+  const guideState = getExpeditionGuideState({
+    dungeonSelected: Boolean(selectedDungeon),
+    selectedUnitCount: selectedUnitIds.length,
+    strategySelected: Boolean(selectedStrategy),
+    selectedDungeonName: selectedDungeon.name,
+    firstDungeonName: DUNGEONS.find((dungeon) => dungeon.id === firstUnlocked)?.name ?? selectedDungeon.name,
+    strategyName: selectedStrategy?.name ?? "未選択",
+    isFirstRun,
+  });
+  const shouldHighlightUnits = guideState.highlightTarget === "units";
+  const shouldHighlightStart = guideState.highlightTarget === "start";
 
   useEffect(() => {
     setSelectedUnitIds((previous) => {
@@ -121,6 +134,24 @@ const Expedition = ({ game, now, onStart }: ExpeditionProps) => {
         </section>
       )}
 
+      <section className="panel expedition-guide-panel" aria-live="polite">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">出撃までの手順</p>
+            <h2>{guideState.title}</h2>
+          </div>
+          <span className={guideState.ready ? "pill guide-ready-pill" : "pill"}>{guideState.ready ? "準備完了" : "次はこちら"}</span>
+        </div>
+        <p>{guideState.body}</p>
+        <div className="expedition-step-list">
+          {guideState.steps.map((step) => (
+            <span key={step.id} className={`guide-step is-${step.status}`}>
+              {step.label}
+            </span>
+          ))}
+        </div>
+      </section>
+
       <section className="dungeon-grid">
         {DUNGEONS.map((dungeon) => {
           const locked = dungeon.unlockLevel > game.demonLordLevel;
@@ -130,11 +161,18 @@ const Expedition = ({ game, now, onStart }: ExpeditionProps) => {
             <button
               key={dungeon.id}
               type="button"
-              className={dungeon.id === dungeonId ? "dungeon-card is-selected" : "dungeon-card"}
+              className={[
+                "dungeon-card",
+                dungeon.id === dungeonId ? "is-selected" : "",
+                guideState.highlightTarget === "dungeon" && !locked ? "is-next-target" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
               disabled={locked}
               onClick={() => setDungeonId(dungeon.id)}
             >
               {recommended && <span className="corner-badge">初回おすすめ</span>}
+              {guideState.highlightTarget === "dungeon" && !locked && <span className="next-marker">次はこちら</span>}
               <span className="large-icon">{locked ? "🔒" : dungeon.icon}</span>
               <strong>{locked ? "？？？" : dungeon.name}</strong>
               <small>
@@ -221,9 +259,18 @@ const Expedition = ({ game, now, onStart }: ExpeditionProps) => {
                 <button
                   key={unit.id}
                   type="button"
-                  className={selectedUnitIds.includes(unit.id) ? "select-chip is-selected" : "select-chip"}
+                  className={[
+                    "select-chip",
+                    selectedUnitIds.includes(unit.id) ? "is-selected" : "",
+                    shouldHighlightUnits && (recommended || recommendedUnits.length === 0) ? "is-next-target" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
                   onClick={() => toggleUnit(unit.id)}
                 >
+                  {shouldHighlightUnits && (recommended || recommendedUnits.length === 0) && (
+                    <span className="next-marker">次はこちら</span>
+                  )}
                   <span>{unit.emoji}</span>
                   <strong>{unit.name}</strong>
                   <small>
@@ -246,9 +293,18 @@ const Expedition = ({ game, now, onStart }: ExpeditionProps) => {
               <button
                 key={strategy.id}
                 type="button"
-                className={strategy.id === strategyId ? "strategy-card is-selected" : "strategy-card"}
+                className={[
+                  "strategy-card",
+                  strategy.id === strategyId ? "is-selected" : "",
+                  guideState.highlightTarget === "strategy" && strategy.id === "balanced" ? "is-next-target" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
                 onClick={() => setStrategyId(strategy.id)}
               >
+                {guideState.highlightTarget === "strategy" && strategy.id === "balanced" && (
+                  <span className="next-marker">次はこちら</span>
+                )}
                 <strong>{strategy.name}</strong>
                 <small>{strategy.description}</small>
               </button>
@@ -277,11 +333,13 @@ const Expedition = ({ game, now, onStart }: ExpeditionProps) => {
 
         <button
           type="button"
-          className="primary-button wide"
+          className={["primary-button", "wide", "start-button", shouldHighlightStart ? "is-next-target is-ready" : ""]
+            .filter(Boolean)
+            .join(" ")}
           onClick={() => onStart(dungeonId, selectedUnitIds, strategyId, itemId || undefined)}
           disabled={selectedUnitIds.length === 0}
         >
-          遠征開始
+          {guideState.ready ? "準備完了：遠征開始" : "配下を選ぶと開始できます"}
         </button>
       </section>
     </section>
