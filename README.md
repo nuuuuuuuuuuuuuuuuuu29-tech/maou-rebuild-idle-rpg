@@ -10,7 +10,8 @@
 - 実装済み範囲は v0.9「遠征準備の危険度・推奨Lv警告UI」までです。
 - `GameState.version` は `5` です。
 - localStorageの保存構造は安定しています。
-- `package.json` の `version` は `1.0.0-rc.1` です。v1.0 release candidate のメタデータとして扱います。
+- `package.json` の `version` は `1.0.0-rc.2` です。v1.0 release candidate のメタデータとして扱います。
+- v1.0.0-rc.2では、スマホ下部ナビを5項目＋メニュー方式へ変更し、遠征準備の初心者導線を補強しています。
 
 ## ゲームの目的
 
