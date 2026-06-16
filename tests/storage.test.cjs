@@ -158,6 +158,67 @@ test("selectedTitleIdを保存復元し、不正な称号IDは安全に無効化
   assert.equal(loadedInvalid.state.selectedTitleId, DEFAULT_TITLE_ID);
 });
 
+test("detailed battle logs are saved and restored without a version bump", () => {
+  const { storage } = loadStorageWithFake();
+  const state = {
+    ...createInitialState(),
+    records: [
+      makeRecord({
+        battleLog: [
+          {
+            id: "combat-1",
+            turn: 1,
+            type: "encounter",
+            actorName: "煤けた骸骨兵",
+            hpBefore: 30,
+            hpAfter: 30,
+            enemyId: "tax-armor",
+            text: "煤けた境界村で「煤けた骸骨兵」と遭遇した。",
+          },
+          {
+            id: "combat-2",
+            turn: 1,
+            type: "allyAttack",
+            actorName: "Unit",
+            targetName: "煤けた骸骨兵",
+            damage: 12,
+            hpBefore: 30,
+            hpAfter: 18,
+            enemyId: "tax-armor",
+            text: "Unitの攻撃。煤けた骸骨兵に 12 ダメージ。",
+          },
+        ],
+        encounteredEnemies: [
+          {
+            id: "tax-armor",
+            name: "煤けた骸骨兵",
+            kind: "骸骨兵",
+            hp: 30,
+            attack: 8,
+            defense: 4,
+            speed: 3,
+            flavor: "村境に残された骨の番兵。",
+            dungeonId: "ash-border-village",
+          },
+        ],
+      }),
+    ],
+  };
+
+  const saved = storage.saveGameState(state);
+  const loaded = storage.loadSavedGame();
+  const record = loaded.state.records[0];
+
+  assert.equal(saved.ok, true);
+  assert.equal(loaded.status, "loaded");
+  assert.equal(loaded.state.version, storage.SAVE_VERSION);
+  assert.equal(record.battleLog.length, 2);
+  assert.equal(record.battleLog[0].type, "encounter");
+  assert.equal(record.battleLog[1].damage, 12);
+  assert.equal(record.encounteredEnemies.length, 1);
+  assert.equal(record.encounteredEnemies[0].id, "tax-armor");
+});
+
 test("v2相当のセーブデータを現行版へ移行し、移行前バックアップを残す", () => {
   const { fake, storage } = loadStorageWithFake();
   const v2State = {

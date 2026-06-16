@@ -703,6 +703,155 @@ label {
   border-left-color: var(--violet);
 }
 
+.combat-log-section {
+  margin-top: 14px;
+  border: 1px solid rgba(123, 78, 80, 0.42);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(24, 15, 24, 0.9), rgba(13, 9, 14, 0.94));
+  padding: 12px;
+}
+
+.combat-log-section.is-compact {
+  margin-top: 16px;
+}
+
+.combat-log-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.combat-log-heading h3 {
+  margin: 2px 0 0;
+  font-size: 1rem;
+}
+
+.enemy-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.enemy-card {
+  border: 1px solid rgba(151, 94, 95, 0.42);
+  border-radius: 8px;
+  background: rgba(17, 11, 18, 0.82);
+  padding: 10px;
+}
+
+.enemy-card.is-boss {
+  border-color: rgba(244, 208, 131, 0.58);
+  background: linear-gradient(135deg, rgba(95, 33, 45, 0.34), rgba(23, 13, 22, 0.9));
+}
+
+.enemy-card > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.enemy-card strong {
+  color: var(--gold-2);
+}
+
+.enemy-card span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.enemy-card p {
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+
+.enemy-card dl {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin: 10px 0 0;
+}
+
+.enemy-card dl div {
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 5px;
+  text-align: center;
+}
+
+.enemy-card dt {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.enemy-card dd {
+  margin: 2px 0 0;
+  color: var(--text);
+  font-weight: 900;
+}
+
+.combat-log-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+}
+
+.combat-log-entry {
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  gap: 8px;
+  align-items: start;
+  border-left: 3px solid rgba(123, 78, 80, 0.7);
+  border-radius: 0 8px 8px 0;
+  background: rgba(13, 9, 14, 0.72);
+  padding: 9px 10px;
+}
+
+.combat-log-entry span {
+  color: var(--gold-2);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.combat-log-entry p {
+  color: var(--text);
+  line-height: 1.65;
+}
+
+.combat-log-entry.is-encounter {
+  border-left-color: var(--violet);
+}
+
+.combat-log-entry.is-allyAttack,
+.combat-log-entry.is-defeatEnemy,
+.combat-log-entry.is-victory {
+  border-left-color: var(--green);
+}
+
+.combat-log-entry.is-enemyAttack,
+.combat-log-entry.is-defeatAlly {
+  border-left-color: var(--bad);
+}
+
+.combat-log-entry.is-retreat {
+  border-left-color: var(--gold);
+}
+
+.combat-log-entry.is-reward {
+  border-left-color: var(--teal);
+}
+
 .reward-box {
   display: flex;
   flex-wrap: wrap;
@@ -2062,6 +2211,24 @@ label {
   .risk-heading {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .combat-log-section {
+    padding: 10px;
+  }
+
+  .combat-log-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .enemy-card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .combat-log-entry {
+    grid-template-columns: 30px 1fr;
+    padding: 8px;
   }
 
   .expedition-step-list {

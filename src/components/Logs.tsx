@@ -3,7 +3,7 @@ import { getStrategy } from "../data/strategies";
 import { formatSeconds, getActiveExpeditionLogs, getActiveProgress } from "../lib/expedition";
 import { getGoals, getNextAction } from "../lib/guidance";
 import { formatRareDropItems, getRareDropItems } from "../lib/rareDrops";
-import type { ExpeditionRecord, GameState, LogType } from "../types/game";
+import type { CombatLogType, ExpeditionRecord, GameState, LogType } from "../types/game";
 import type { TabId } from "./Nav";
 
 interface LogsProps {
@@ -27,6 +27,18 @@ const logIcon: Record<LogType, string> = {
   success: "✓",
   failure: "×",
   retreat: "↩",
+};
+
+const combatLogIcon: Record<CombatLogType, string> = {
+  encounter: "EN",
+  allyAttack: "AT",
+  enemyAttack: "DM",
+  damage: "HP",
+  defeatEnemy: "OK",
+  defeatAlly: "!!",
+  retreat: "RT",
+  victory: "VI",
+  reward: "RW",
 };
 
 const rarityLabel = {
@@ -122,6 +134,66 @@ const RewardLine = ({ record, detailed = false }: { record: ExpeditionRecord; de
   );
 };
 
+const BattleLogSection = ({ record, compact = false }: { record: ExpeditionRecord; compact?: boolean }) => {
+  const entries = record.battleLog ?? [];
+  if (entries.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className={compact ? "combat-log-section is-compact" : "combat-log-section"}>
+      <div className="combat-log-heading">
+        <div>
+          <span className="eyebrow">戦闘ログ</span>
+          <h3>敵遭遇と交戦記録</h3>
+        </div>
+        <span className="pill">{entries.length}件</span>
+      </div>
+
+      {record.encounteredEnemies && record.encounteredEnemies.length > 0 && (
+        <div className="enemy-card-grid">
+          {record.encounteredEnemies.map((enemy) => (
+            <article key={`${record.id}-${enemy.id}`} className={enemy.isBoss ? "enemy-card is-boss" : "enemy-card"}>
+              <div>
+                <strong>{enemy.name}</strong>
+                <span>{enemy.isBoss ? "首魁" : enemy.kind}</span>
+              </div>
+              <p>{enemy.flavor}</p>
+              <dl>
+                <div>
+                  <dt>HP</dt>
+                  <dd>{enemy.hp}</dd>
+                </div>
+                <div>
+                  <dt>攻</dt>
+                  <dd>{enemy.attack}</dd>
+                </div>
+                <div>
+                  <dt>防</dt>
+                  <dd>{enemy.defense}</dd>
+                </div>
+                <div>
+                  <dt>速</dt>
+                  <dd>{enemy.speed}</dd>
+                </div>
+              </dl>
+            </article>
+          ))}
+        </div>
+      )}
+
+      <ol className="combat-log-list">
+        {entries.map((entry, index) => (
+          <li key={`${entry.id}-${index}`} className={`combat-log-entry is-${entry.type}`}>
+            <span>{combatLogIcon[entry.type]}</span>
+            <p>{entry.text}</p>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+};
+
 const Logs = ({ game, now, onNavigate }: LogsProps) => {
   const activeLogs = getActiveExpeditionLogs(game, now);
   const progress = getActiveProgress(game, now);
@@ -171,6 +243,7 @@ const Logs = ({ game, now, onNavigate }: LogsProps) => {
             </span>
           </div>
           <RewardLine record={latestRecord} detailed />
+          <BattleLogSection record={latestRecord} compact />
           <div className="next-step-strip">
             <div>
               <strong>{nextAction.title}</strong>
@@ -224,6 +297,7 @@ const Logs = ({ game, now, onNavigate }: LogsProps) => {
               </span>
             </div>
             <RewardLine record={record} />
+            <BattleLogSection record={record} />
             <ol className="log-list battle-report">
               {record.logs.map((log) => (
                 <li key={log.id} className={`log-entry ${log.type}`}>

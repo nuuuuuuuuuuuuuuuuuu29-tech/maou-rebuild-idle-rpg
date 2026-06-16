@@ -15,6 +15,17 @@ export type LogType =
   | "failure"
   | "retreat";
 
+export type CombatLogType =
+  | "encounter"
+  | "allyAttack"
+  | "enemyAttack"
+  | "damage"
+  | "defeatEnemy"
+  | "defeatAlly"
+  | "retreat"
+  | "victory"
+  | "reward";
+
 export type ItemType = "support" | "material" | "relic";
 
 export interface Stats {
@@ -90,6 +101,47 @@ export interface DungeonEnemy {
   def: number;
   spd: number;
   logLine: string;
+}
+
+export interface EnemyCharacterDefinition {
+  id: string;
+  name: string;
+  kind: string;
+  hp: number;
+  attack: number;
+  defense: number;
+  speed: number;
+  flavor: string;
+  dungeonId: string;
+  dungeonName: string;
+  weight: number;
+  isBoss?: boolean;
+}
+
+export interface CombatEnemySnapshot {
+  id: string;
+  name: string;
+  kind: string;
+  hp: number;
+  attack: number;
+  defense: number;
+  speed: number;
+  flavor: string;
+  dungeonId: string;
+  isBoss?: boolean;
+}
+
+export interface CombatLogEntry {
+  id: string;
+  turn: number;
+  type: CombatLogType;
+  actorName?: string;
+  targetName?: string;
+  damage?: number;
+  hpBefore?: number;
+  hpAfter?: number;
+  enemyId?: string;
+  text: string;
 }
 
 export interface DungeonRewardItem {
@@ -288,6 +340,8 @@ export interface ExpeditionRecord {
   status: ExpeditionStatus;
   logs: LogEntry[];
   rewards?: ExpeditionRewards;
+  battleLog?: CombatLogEntry[];
+  encounteredEnemies?: CombatEnemySnapshot[];
 }
 
 export interface CollectionState {

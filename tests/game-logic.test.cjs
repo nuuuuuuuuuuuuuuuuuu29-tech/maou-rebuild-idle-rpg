@@ -14,6 +14,7 @@ const { DEFAULT_TITLE_ID, TITLES } = require("../.tmp-tests/src/data/titles.js")
 const { UNIT_TEMPLATES } = require("../.tmp-tests/src/data/units.js");
 const { UNIT_TRAIT_IDS } = require("../.tmp-tests/src/data/traits.js");
 const { DUNGEONS } = require("../.tmp-tests/src/data/dungeons.js");
+const { getEnemyCatalogForDungeon } = require("../.tmp-tests/src/data/enemies.js");
 const {
   evaluateExpeditionRisk,
   getRecommendedAction,
@@ -105,6 +106,57 @@ const simulateOneUnit = (templateId, randomValue = 0.01) =>
       durationSeconds: 30,
     });
   });
+
+test("enemy catalog resolves combat enemies for every dungeon", () => {
+  DUNGEONS.forEach((dungeon) => {
+    const enemies = getEnemyCatalogForDungeon(dungeon.id);
+
+    assert.ok(enemies.length >= dungeon.enemies.length + 1, `${dungeon.id} has enemy catalog entries`);
+    enemies.forEach((enemy) => {
+      assert.equal(enemy.dungeonId, dungeon.id);
+      assert.ok(enemy.id);
+      assert.ok(enemy.name);
+      assert.ok(enemy.kind);
+      assert.ok(enemy.flavor);
+      assert.ok(enemy.hp > 0);
+      assert.ok(enemy.attack >= 0);
+      assert.ok(enemy.defense >= 0);
+      assert.ok(enemy.speed >= 0);
+      assert.ok(enemy.weight >= 1);
+    });
+  });
+});
+
+test("expedition result includes detailed battle log entries", () => {
+  const result = simulateOneUnit("cinder-goblin", 0.01);
+  const battleLog = result.record.battleLog;
+
+  assert.equal(result.record.status, "success");
+  assert.ok(Array.isArray(battleLog));
+  assert.ok(battleLog.some((entry) => entry.type === "encounter"));
+  assert.ok(battleLog.some((entry) => entry.type === "allyAttack"));
+  assert.ok(battleLog.some((entry) => entry.type === "enemyAttack"));
+  assert.ok(battleLog.some((entry) => entry.type === "defeatEnemy"));
+  assert.ok(battleLog.some((entry) => entry.type === "victory"));
+  assert.ok(battleLog.some((entry) => entry.type === "reward"));
+  assert.ok(result.record.encounteredEnemies.length > 0);
+});
+
+test("battle log damage and HP values never become negative", () => {
+  const result = simulateOneUnit("cinder-goblin", 0.01);
+
+  result.record.battleLog.forEach((entry) => {
+    if (entry.damage !== undefined) {
+      assert.ok(entry.damage >= 0, `${entry.type} damage is non-negative`);
+    }
+    if (entry.hpBefore !== undefined) {
+      assert.ok(entry.hpBefore >= 0, `${entry.type} hpBefore is non-negative`);
+    }
+    if (entry.hpAfter !== undefined) {
+      assert.ok(entry.hpAfter >= 0, `${entry.type} hpAfter is non-negative`);
+    }
+  });
+});
 
 test("遠征開始でアクティブ遠征とユニット状態が更新される", () => {
   const state = createInitialState();

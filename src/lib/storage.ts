@@ -8,6 +8,9 @@ import type {
   BossDefeatRecord,
   CollectionState,
   CollectionRewardState,
+  CombatEnemySnapshot,
+  CombatLogEntry,
+  CombatLogType,
   DungeonMasteryRecord,
   ExpeditionRecord,
   ExpeditionStatus,
@@ -72,6 +75,17 @@ const STRATEGY_IDS = new Set<StrategyId>(["balanced", "safe", "rush", "loot"]);
 const UNIT_STATUSES = new Set<UnitStatus>(["idle", "expedition", "downed"]);
 const EXPEDITION_STATUSES = new Set<ExpeditionStatus>(["in_progress", "success", "failure", "retreat"]);
 const LOG_TYPES = new Set<LogType>(["info", "battle", "loot", "rescue", "success", "failure", "retreat"]);
+const COMBAT_LOG_TYPES = new Set<CombatLogType>([
+  "encounter",
+  "allyAttack",
+  "enemyAttack",
+  "damage",
+  "defeatEnemy",
+  "defeatAlly",
+  "retreat",
+  "victory",
+  "reward",
+]);
 const RARITIES = new Set<Rarity>(["common", "uncommon", "rare", "epic", "legendary"]);
 
 const isRecord = (value: unknown): value is UnknownRecord =>
@@ -338,6 +352,85 @@ const normalizeLogs = (logs: unknown): LogEntry[] => {
   });
 };
 
+const normalizeCombatLog = (battleLog: unknown): CombatLogEntry[] | undefined => {
+  if (!Array.isArray(battleLog)) {
+    return undefined;
+  }
+
+  const normalized = battleLog.flatMap((entry, index) => {
+    if (!isRecord(entry) || typeof entry.text !== "string") {
+      return [];
+    }
+
+    const type =
+      typeof entry.type === "string" && COMBAT_LOG_TYPES.has(entry.type as CombatLogType)
+        ? (entry.type as CombatLogType)
+        : "damage";
+    const damage = typeof entry.damage === "number" && Number.isFinite(entry.damage) ? Math.max(0, Math.round(entry.damage)) : undefined;
+    const hpBefore =
+      typeof entry.hpBefore === "number" && Number.isFinite(entry.hpBefore) ? Math.max(0, Math.round(entry.hpBefore)) : undefined;
+    const hpAfter =
+      typeof entry.hpAfter === "number" && Number.isFinite(entry.hpAfter) ? Math.max(0, Math.round(entry.hpAfter)) : undefined;
+
+    return [
+      {
+        id: stringOr(entry.id, `combat-log-migrated-${index + 1}`),
+        turn: integerAtLeast(entry.turn, 0, 0),
+        type,
+        actorName: typeof entry.actorName === "string" ? entry.actorName : undefined,
+        targetName: typeof entry.targetName === "string" ? entry.targetName : undefined,
+        damage,
+        hpBefore,
+        hpAfter,
+        enemyId: typeof entry.enemyId === "string" ? entry.enemyId : undefined,
+        text: entry.text,
+      },
+    ];
+  });
+
+  return normalized.length > 0 ? normalized : undefined;
+};
+
+const normalizeEncounteredEnemies = (enemies: unknown): CombatEnemySnapshot[] | undefined => {
+  if (!Array.isArray(enemies)) {
+    return undefined;
+  }
+
+  const normalized = enemies.flatMap((entry, index) => {
+    if (
+      !isRecord(entry) ||
+      typeof entry.id !== "string" ||
+      typeof entry.name !== "string" ||
+      typeof entry.kind !== "string" ||
+      typeof entry.flavor !== "string"
+    ) {
+      return [];
+    }
+
+    const dungeonId = typeof entry.dungeonId === "string" && DUNGEON_IDS.has(entry.dungeonId) ? entry.dungeonId : undefined;
+    if (!dungeonId) {
+      return [];
+    }
+
+    return [
+      {
+        id: stringOr(entry.id, `enemy-migrated-${index + 1}`),
+        name: entry.name,
+        kind: entry.kind,
+        hp: integerAtLeast(entry.hp, 1, 1),
+        attack: integerAtLeast(entry.attack, 1, 0),
+        defense: integerAtLeast(entry.defense, 0, 0),
+        speed: integerAtLeast(entry.speed, 0, 0),
+        flavor: entry.flavor,
+        dungeonId,
+        isBoss: typeof entry.isBoss === "boolean" ? entry.isBoss : undefined,
+      },
+    ];
+  });
+
+  return normalized.length > 0 ? normalized : undefined;
+};
+
 const normalizeRewardItems = (items: unknown): RewardItemStack[] => {
   if (!Array.isArray(items)) {
     return [];
@@ -437,6 +530,8 @@ const normalizeRecords = (records: unknown): ExpeditionRecord[] => {
           status,
           logs: normalizeLogs(entry.logs),
           rewards: normalizeRewards(entry.rewards),
+          battleLog: normalizeCombatLog(entry.battleLog),
+          encounteredEnemies: normalizeEncounteredEnemies(entry.encounteredEnemies),
         },
       ];
     })

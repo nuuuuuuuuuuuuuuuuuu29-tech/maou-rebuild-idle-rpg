@@ -15,6 +15,7 @@ import type {
   RewardItemStack,
 } from "../types/game";
 import { getDungeonMasteryInfo } from "./mastery";
+import { createCombatReport } from "./combatLog";
 import { createUnit, makeId } from "./progression";
 import { getRareDropMasteryBonus, isRareDropItem } from "./rareDrops";
 import { getPartyTraitModifiers } from "./traits";
@@ -664,6 +665,14 @@ export const simulateExpedition = (
       rarity: unit.rarity,
     })),
   };
+  const combatReport = createCombatReport({
+    active,
+    dungeon,
+    initialParty: party,
+    finalParty: partyUpdates,
+    status,
+    rewards,
+  });
 
   const record: ExpeditionRecord = {
     id: active.id,
@@ -676,6 +685,8 @@ export const simulateExpedition = (
     status,
     logs,
     rewards,
+    battleLog: combatReport.battleLog,
+    encounteredEnemies: combatReport.encounteredEnemies,
   };
 
   return { record, partyUpdates, rescuedUnits, rewards };
