@@ -1,70 +1,55 @@
 # AGENTS.md
 
-## Project Overview
+## Project
 
-このプロジェクトは「魔王再建記」という、完全オリジナルのブラウザゲームです。
-ジャンルは放置型・遠征型・魔物育成RPGで、敗北した魔王が配下の魔物を集め、遠征部隊を送り出し、失われた領地を取り戻していく体験を目指します。
+This is a Vite + React + TypeScript browser idle RPG project.
 
-## Originality Rules
+The project is an incremental / idle RPG inspired by Bokumaka-style gameplay.
+Prioritize small, safe, reviewable changes.
 
-- 既存ゲームの固有名詞、キャラクター名、文章、画像、UIデザイン、データ、バランスをコピーしない。
-- 参考にしてよいのは、放置型・遠征型・育成型RPGとしてのゲーム体験や構造のみ。
-- 世界観、名称、魔物、ダンジョン、アイテム、ログ文、演出、UI表現はこのプロジェクト独自のものにする。
-- 追加コンテンツや文体は「魔王軍」「遠征」「再建」「ダークファンタジー」の雰囲気に寄せるが、読みやすさを優先する。
+## Environment
 
-## Tech Stack
+* The developer mainly uses Windows PowerShell.
+* Prefer Windows-compatible commands.
+* Use `npm.cmd` instead of `npm` when providing or running commands in PowerShell.
 
-- Vite + React + TypeScript
-- CSSは通常のCSSを使う。
-- フロントエンドだけで完結する。
-- 外部APIは使わない。
-- セーブデータは localStorage に保存する。
-- 画像素材は使わず、絵文字、テキスト、CSSで表現する。
+## Commands
 
-## Code Organization
+* Test: `npm.cmd test`
+* Build: `npm.cmd run build`
+* Balance simulation: `npm.cmd run sim:balance -- --trials 1000 --seed 12345`
 
-- データ定義は `src/data/` に置く。
-- 型定義は `src/types/` に置く。
-- ゲームロジック、戦闘、遠征、進行、保存処理は `src/lib/` に分離する。
-- UIコンポーネントは `src/components/` に分離する。
-- localStorageのセーブ、ロード、初期化、マイグレーションは `src/lib/storage.ts` に整理する。
-- 既存の命名、構造、UIパターンに合わせ、不要な大規模リファクタは避ける。
+## Current stability rules
 
-## Save Data Safety
+* Do not perform broad rewrites unless explicitly requested.
+* Keep changes small and reviewable.
+* Preserve existing save data compatibility.
+* Do not change `SAVE_VERSION` unless a migration is actually required.
+* If `SAVE_VERSION` changes, explain why and add or verify migration logic.
+* Do not remove existing tests.
+* Prefer deterministic logic for simulations and tests.
+* Do not change unrelated gameplay balance while implementing UI-only changes.
+* Do not introduce new production dependencies unless explicitly approved.
 
-- 既存のセーブデータを不用意に壊さない。
-- `GameState.version` とマイグレーション処理を維持する。
-- 保存形式を変える場合は、古いセーブを読み込める移行処理を追加する。
-- 壊れたセーブデータを扱う場合は、可能な限りバックアップを残してから初期化する。
-- localStorageキーや保存構造を変更する場合は、READMEにも影響を記載する。
+## Gameplay-sensitive areas
 
-## Development Workflow
+Be especially careful when modifying:
 
-- 大きな変更、仕様変更、データ構造変更の前には、短い実装計画を提示する。
-- 小さな修正は既存方針に沿ってそのまま実装してよい。
-- 変更後は可能な限り `npm run build` を実行する。
-- 可能ならTypeScriptエラー、Lintエラー、import参照、localStorage関連の破綻も確認する。
-- この環境で `npm` が使えない場合は、その理由と代替で実施した確認内容を最後に明記する。
-- UI変更時はスマホ幅でも情報が崩れないようにする。
+* save data structure
+* migration logic
+* reward calculation
+* mastery / proficiency logic
+* rare drop logic
+* battle logs
+* balance simulation
+* localStorage persistence
 
-## README Policy
+## Done when
 
-- READMEは初心者でも起動方法とゲーム仕様を理解できる状態に保つ。
-- 新しい画面、主要機能、保存仕様、開発手順を追加したらREADMEも更新する。
-- READMEには未実装の拡張余地も残し、今後の作業を依頼しやすくする。
-
-## Release Candidate Docs
-
-- v1.0候補の公開前整理では、ゲーム本体の挙動、UI、バランス、セーブ構造を変更しない。
-- 公開前確認の導線は `docs/release-checklist.md` と `docs/manual-qa.md` にまとめる。
-- プレイヤー向けの現在機能は `docs/release-notes-v1.0-rc.md` に簡潔にまとめる。
-- Windows PowerShell環境では `npm` がブロックされる場合があるため、検証手順には `npm.cmd` も明記する。
-
-## Final Response Policy
-
-作業完了時は、次を簡潔にまとめる。
-
-- 変更内容
-- 確認結果
-- `npm run build` の結果
-- 残っている課題や次にやるとよいこと
+* `npm.cmd test` passes.
+* `npm.cmd run build` passes.
+* If gameplay balance is affected, run:
+  `npm.cmd run sim:balance -- --trials 1000 --seed 12345`
+* Report all changed files.
+* Summarize risks and manual QA points.
+* State whether the change is ready to commit.
