@@ -41,6 +41,51 @@ const combatLogIcon: Record<CombatLogType, string> = {
   reward: "RW",
 };
 
+type CombatLogEntryView = NonNullable<ExpeditionRecord["battleLog"]>[number];
+
+type CombatLogDisplayItem =
+  | {
+      kind: "heading";
+      key: string;
+      battleNumber: number;
+      enemyName?: string;
+    }
+  | {
+      kind: "entry";
+      entry: CombatLogEntryView;
+      index: number;
+    };
+
+const getEncounterEnemyName = (entry: CombatLogEntryView) => {
+  if (entry.actorName) {
+    return entry.actorName;
+  }
+
+  const quotedName = entry.text.match(/「([^」]+)」/u);
+  return quotedName?.[1];
+};
+
+const buildCombatLogDisplayItems = (entries: CombatLogEntryView[]): CombatLogDisplayItem[] => {
+  let battleNumber = 0;
+  const items: CombatLogDisplayItem[] = [];
+
+  entries.forEach((entry, index) => {
+    if (entry.type === "encounter") {
+      battleNumber += 1;
+      items.push({
+        kind: "heading",
+        key: `combat-heading-${entry.id}-${index}`,
+        battleNumber,
+        enemyName: getEncounterEnemyName(entry),
+      });
+    }
+
+    items.push({ kind: "entry", entry, index });
+  });
+
+  return items;
+};
+
 const rarityLabel = {
   common: "通常",
   uncommon: "上物",
@@ -139,6 +184,7 @@ const BattleLogSection = ({ record, compact = false }: { record: ExpeditionRecor
   if (entries.length === 0) {
     return null;
   }
+  const displayItems = buildCombatLogDisplayItems(entries);
 
   return (
     <section className={compact ? "combat-log-section is-compact" : "combat-log-section"}>
@@ -183,12 +229,24 @@ const BattleLogSection = ({ record, compact = false }: { record: ExpeditionRecor
       )}
 
       <ol className="combat-log-list">
-        {entries.map((entry, index) => (
-          <li key={`${entry.id}-${index}`} className={`combat-log-entry is-${entry.type}`}>
-            <span>{combatLogIcon[entry.type]}</span>
-            <p>{entry.text}</p>
-          </li>
-        ))}
+        {displayItems.map((item) => {
+          if (item.kind === "heading") {
+            return (
+              <li key={item.key} className="combat-log-battle-heading">
+                <span>戦闘 {item.battleNumber}</span>
+                {item.enemyName && <strong>{item.enemyName}</strong>}
+              </li>
+            );
+          }
+
+          const { entry, index } = item;
+          return (
+            <li key={`${entry.id}-${index}`} className={`combat-log-entry is-${entry.type}`}>
+              <span>{combatLogIcon[entry.type]}</span>
+              <p>{entry.text}</p>
+            </li>
+          );
+        })}
       </ol>
     </section>
   );
