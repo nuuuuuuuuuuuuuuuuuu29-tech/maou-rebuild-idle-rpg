@@ -5,6 +5,7 @@ const { createInitialState } = require("../.tmp-tests/src/lib/progression.js");
 const { advanceGame, claimCollectionReward, startExpedition } = require("../.tmp-tests/src/lib/expedition.js");
 const { simulateExpedition } = require("../.tmp-tests/src/lib/battle.js");
 const { getDungeonMasteryLevel } = require("../.tmp-tests/src/lib/mastery.js");
+const { buildCombatLogDisplayItems } = require("../.tmp-tests/src/lib/combatLogDisplay.js");
 const {
   getRareDropCandidates,
   getRareDropMasteryBonus,
@@ -107,6 +108,14 @@ const simulateOneUnit = (templateId, randomValue = 0.01) =>
     });
   });
 
+const makeCombatEntry = (id, type, overrides = {}) => ({
+  id,
+  turn: overrides.turn ?? 1,
+  type,
+  text: overrides.text ?? `${type} text`,
+  ...overrides,
+});
+
 test("enemy catalog resolves combat enemies for every dungeon", () => {
   DUNGEONS.forEach((dungeon) => {
     const enemies = getEnemyCatalogForDungeon(dungeon.id);
@@ -156,6 +165,135 @@ test("battle log damage and HP values never become negative", () => {
       assert.ok(entry.hpAfter >= 0, `${entry.type} hpAfter is non-negative`);
     }
   });
+});
+
+test("combat log display compacts matching ally and enemy damage rows", () => {
+  const displayItems = buildCombatLogDisplayItems([
+    makeCombatEntry("encounter-1", "encounter", { actorName: "Rust Guard", text: "Rust Guard appears." }),
+    makeCombatEntry("ally-attack-1", "allyAttack", {
+      actorName: "Ally",
+      targetName: "Rust Guard",
+      damage: 12,
+      hpBefore: 30,
+      hpAfter: 18,
+      text: "Ally attacks Rust Guard for 12 damage.",
+    }),
+    makeCombatEntry("enemy-hp-1", "damage", {
+      actorName: "Rust Guard",
+      hpBefore: 30,
+      hpAfter: 18,
+      text: "Rust Guard HP: 30 -> 18",
+    }),
+    makeCombatEntry("enemy-attack-1", "enemyAttack", {
+      actorName: "Rust Guard",
+      targetName: "Ally",
+      damage: 8,
+      hpBefore: 20,
+      hpAfter: 12,
+      text: "Rust Guard attacks Ally for 8 damage.",
+    }),
+    makeCombatEntry("ally-hp-1", "damage", {
+      actorName: "Ally",
+      hpBefore: 20,
+      hpAfter: 12,
+      text: "Ally HP: 20 -> 12",
+    }),
+  ]);
+
+  const entries = displayItems.filter((item) => item.kind === "entry");
+
+  assert.equal(displayItems[0].kind, "heading");
+  assert.equal(entries.length, 3);
+  assert.equal(entries[1].entry.type, "allyAttack");
+  assert.match(entries[1].displayText, /HP 30 → 18/);
+  assert.equal(entries[1].mergedDamageEntry.id, "enemy-hp-1");
+  assert.equal(entries[2].entry.type, "enemyAttack");
+  assert.match(entries[2].displayText, /HP 20 → 12/);
+  assert.equal(entries[2].mergedDamageEntry.id, "ally-hp-1");
+  assert.equal(entries.some((item) => item.entry.id === "enemy-hp-1"), false);
+  assert.equal(entries.some((item) => item.entry.id === "ally-hp-1"), false);
+});
+
+test("combat log display keeps defeat, retreat, victory, reward, and unmatched rows", () => {
+  const displayItems = buildCombatLogDisplayItems([
+    makeCombatEntry("encounter-1", "encounter", { actorName: "First Enemy" }),
+    makeCombatEntry("ally-attack-1", "allyAttack", {
+      actorName: "Ally",
+      targetName: "First Enemy",
+      hpBefore: 6,
+      hpAfter: 0,
+      text: "Ally attacks First Enemy for 6 damage.",
+    }),
+    makeCombatEntry("enemy-hp-1", "damage", { actorName: "First Enemy", hpBefore: 6, hpAfter: 0 }),
+    makeCombatEntry("defeat-enemy-1", "defeatEnemy", { targetName: "First Enemy" }),
+    makeCombatEntry("encounter-2", "encounter", { actorName: "Second Enemy" }),
+    makeCombatEntry("enemy-attack-1", "enemyAttack", {
+      actorName: "Second Enemy",
+      targetName: "Ally",
+      hpBefore: 8,
+      hpAfter: 0,
+      text: "Second Enemy attacks Ally for 8 damage.",
+    }),
+    makeCombatEntry("ally-hp-1", "damage", { actorName: "Ally", hpBefore: 8, hpAfter: 0 }),
+    makeCombatEntry("defeat-ally-1", "defeatAlly", { targetName: "Ally" }),
+    makeCombatEntry("solo-attack", "allyAttack", { actorName: "Ally", targetName: "Third Enemy" }),
+    makeCombatEntry("bad-attack", "enemyAttack", {
+      actorName: "Third Enemy",
+      targetName: "Ally",
+      hpBefore: 10,
+      hpAfter: 7,
+    }),
+    makeCombatEntry("wrong-hp", "damage", { actorName: "Other Ally", hpBefore: 10, hpAfter: 7 }),
+    makeCombatEntry("victory-1", "victory"),
+    makeCombatEntry("retreat-1", "retreat"),
+    makeCombatEntry("reward-1", "reward"),
+  ]);
+  const entries = displayItems.filter((item) => item.kind === "entry");
+  const headings = displayItems.filter((item) => item.kind === "heading");
+
+  assert.deepEqual(headings.map((item) => item.enemyName), ["First Enemy", "Second Enemy"]);
+  assert.deepEqual(
+    entries.map((item) => item.entry.type),
+    [
+      "encounter",
+      "allyAttack",
+      "defeatEnemy",
+      "encounter",
+      "enemyAttack",
+      "defeatAlly",
+      "allyAttack",
+      "enemyAttack",
+      "damage",
+      "victory",
+      "retreat",
+      "reward",
+    ],
+  );
+  assert.match(entries.find((item) => item.entry.id === "ally-attack-1").displayText, /HP 6 → 0/);
+  assert.equal(entries.find((item) => item.entry.id === "defeat-enemy-1").entry.type, "defeatEnemy");
+  assert.match(entries.find((item) => item.entry.id === "enemy-attack-1").displayText, /HP 8 → 0/);
+  assert.equal(entries.find((item) => item.entry.id === "defeat-ally-1").entry.type, "defeatAlly");
+  assert.equal(entries.find((item) => item.entry.id === "solo-attack").displayText, "allyAttack text");
+  assert.equal(entries.find((item) => item.entry.id === "bad-attack").mergedDamageEntry, undefined);
+  assert.equal(entries.find((item) => item.entry.id === "wrong-hp").entry.type, "damage");
+});
+
+test("combat log display does not compact across battle boundaries or missing logs", () => {
+  const displayItems = buildCombatLogDisplayItems([
+    makeCombatEntry("attack-1", "allyAttack", {
+      actorName: "Ally",
+      targetName: "First Enemy",
+      hpBefore: 10,
+      hpAfter: 5,
+    }),
+    makeCombatEntry("encounter-1", "encounter", { actorName: "Second Enemy" }),
+    makeCombatEntry("late-hp-1", "damage", { actorName: "First Enemy", hpBefore: 10, hpAfter: 5 }),
+  ]);
+  const entries = displayItems.filter((item) => item.kind === "entry");
+
+  assert.equal(buildCombatLogDisplayItems([]).length, 0);
+  assert.equal(entries.find((item) => item.entry.id === "attack-1").mergedDamageEntry, undefined);
+  assert.equal(entries.find((item) => item.entry.id === "late-hp-1").entry.type, "damage");
 });
 
 test("遠征開始でアクティブ遠征とユニット状態が更新される", () => {

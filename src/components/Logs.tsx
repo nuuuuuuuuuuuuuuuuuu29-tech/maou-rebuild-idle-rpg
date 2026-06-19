@@ -1,5 +1,6 @@
 import { getItemDefinition } from "../data/items";
 import { getStrategy } from "../data/strategies";
+import { buildCombatLogDisplayItems as buildCompactCombatLogDisplayItems } from "../lib/combatLogDisplay";
 import { formatSeconds, getActiveExpeditionLogs, getActiveProgress } from "../lib/expedition";
 import { getGoals, getNextAction } from "../lib/guidance";
 import { formatRareDropItems, getRareDropItems } from "../lib/rareDrops";
@@ -184,7 +185,7 @@ const BattleLogSection = ({ record, compact = false }: { record: ExpeditionRecor
   if (entries.length === 0) {
     return null;
   }
-  const displayItems = buildCombatLogDisplayItems(entries);
+  const displayItems = buildCompactCombatLogDisplayItems(entries);
 
   return (
     <section className={compact ? "combat-log-section is-compact" : "combat-log-section"}>
@@ -239,11 +240,11 @@ const BattleLogSection = ({ record, compact = false }: { record: ExpeditionRecor
             );
           }
 
-          const { entry, index } = item;
+          const { entry } = item;
           return (
-            <li key={`${entry.id}-${index}`} className={`combat-log-entry is-${entry.type}`}>
+            <li key={item.key} className={`combat-log-entry is-${entry.type}`}>
               <span>{combatLogIcon[entry.type]}</span>
-              <p>{entry.text}</p>
+              <p>{item.displayText}</p>
             </li>
           );
         })}
