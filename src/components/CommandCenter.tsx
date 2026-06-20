@@ -1,6 +1,8 @@
 import { ITEM_DEFINITIONS, getItemDefinition, supportItems } from "../data/items";
 import { UNIT_TEMPLATES } from "../data/units";
 import { getInventoryCount } from "../lib/progression";
+import { getRecruitmentStatRows } from "../lib/recruitment";
+import { formatTraitEffect, getUnitTrait } from "../lib/traits";
 import type { GameState } from "../types/game";
 
 interface CommandCenterProps {
@@ -45,11 +47,34 @@ const CommandCenter = ({
         <div className="market-grid">
           {UNIT_TEMPLATES.map((template) => {
             const locked = game.demonLordLevel < template.unlockLevel;
+            const trait = getUnitTrait(template.id);
+            const stats = getRecruitmentStatRows(template);
             return (
-              <article key={template.id} className="market-card">
+              <article key={template.id} className="market-card recruitment-card">
                 <span className="large-icon">{locked ? "🔒" : template.emoji}</span>
                 <h3>{locked ? "？？？" : template.species}</h3>
                 <p>{locked ? `魔王Lv${template.unlockLevel}で契約可能` : template.description}</p>
+                {!locked && (
+                  <>
+                    <span className="recruitment-stats-label">雇用時ステータス</span>
+                    <dl className="recruitment-stat-grid" aria-label={`${template.species}の雇用時ステータス`}>
+                      {stats.map((stat) => (
+                        <div key={stat.key} className="recruitment-stat">
+                          <dt>{stat.label}</dt>
+                          <dd>
+                            {stat.value}
+                            {stat.suffix}
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                    <div className="recruitment-trait">
+                      <span>特性</span>
+                      <strong>{trait.name}</strong>
+                      <small>{formatTraitEffect(trait)}</small>
+                    </div>
+                  </>
+                )}
                 <button type="button" className="secondary-button" disabled={locked} onClick={() => onHire(template.id)}>
                   {template.hireCost}G
                 </button>

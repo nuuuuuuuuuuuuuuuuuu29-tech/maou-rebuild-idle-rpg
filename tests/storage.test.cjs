@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const { createInitialState } = require("../.tmp-tests/src/lib/progression.js");
+const { hireUnit } = require("../.tmp-tests/src/lib/expedition.js");
 const { DEFAULT_TITLE_ID } = require("../.tmp-tests/src/data/titles.js");
 
 const storagePath = "../.tmp-tests/src/lib/storage.js";
@@ -83,6 +84,21 @@ test("localStorageへ保存し、復元できる", () => {
   assert.equal(loaded.state.demonLordName, "Test Lord");
   assert.equal(loaded.state.gold, 345);
   assert.ok(fake.store.has(storage.STORAGE_KEY));
+});
+
+test("雇用済みユニットと所持金を保存復元できる", () => {
+  const { storage } = loadStorageWithFake();
+  const base = createInitialState();
+  const hired = hireUnit(base, "thorn-kobold");
+
+  assert.equal(hired.ok, true);
+  assert.equal(storage.saveGameState(hired.state).ok, true);
+
+  const loaded = storage.loadSavedGame();
+  assert.equal(loaded.status, "loaded");
+  assert.equal(loaded.state.gold, hired.state.gold);
+  assert.equal(loaded.state.units.length, hired.state.units.length);
+  assert.ok(loaded.state.units.some((unit) => unit.templateId === "thorn-kobold"));
 });
 
 test("既存v5セーブをマイグレーションなしで読み込める", () => {

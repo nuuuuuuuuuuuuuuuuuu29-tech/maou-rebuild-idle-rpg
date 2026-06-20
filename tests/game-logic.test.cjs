@@ -1,11 +1,15 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const React = require("react");
+const { renderToStaticMarkup } = require("react-dom/server");
 
-const { createInitialState } = require("../.tmp-tests/src/lib/progression.js");
-const { advanceGame, claimCollectionReward, startExpedition } = require("../.tmp-tests/src/lib/expedition.js");
+const { createInitialState, createUnit } = require("../.tmp-tests/src/lib/progression.js");
+const { advanceGame, claimCollectionReward, hireUnit, startExpedition } = require("../.tmp-tests/src/lib/expedition.js");
 const { simulateExpedition } = require("../.tmp-tests/src/lib/battle.js");
 const { getDungeonMasteryLevel } = require("../.tmp-tests/src/lib/mastery.js");
 const { buildCombatLogDisplayItems } = require("../.tmp-tests/src/lib/combatLogDisplay.js");
+const { getRecruitmentStatRows } = require("../.tmp-tests/src/lib/recruitment.js");
+const CommandCenter = require("../.tmp-tests/src/components/CommandCenter.js").default;
 const {
   getRareDropCandidates,
   getRareDropMasteryBonus,
@@ -114,6 +118,87 @@ const makeCombatEntry = (id, type, overrides = {}) => ({
   type,
   text: overrides.text ?? `${type} text`,
   ...overrides,
+});
+
+const recruitmentStatsByKey = (template) =>
+  Object.fromEntries(getRecruitmentStatRows(template).map((row) => [row.key, row]));
+
+test("雇用候補の表示値は実際に生成されるLv1ユニットと一致する", () => {
+  UNIT_TEMPLATES.forEach((template) => {
+    const stats = recruitmentStatsByKey(template);
+    const unit = createUnit(template.id, { id: `recruit-test-${template.id}` });
+
+    assert.equal(stats.level.value, 1);
+    assert.equal(stats.hp.value, unit.maxHp);
+    assert.equal(stats.atk.value, unit.atk);
+    assert.equal(stats.def.value, unit.def);
+    assert.equal(stats.spd.value, unit.spd);
+    assert.equal(stats.cost.value, template.hireCost);
+    assert.equal(stats.cost.suffix, "G");
+  });
+});
+
+test("雇用表示は0を保持し、未定義値とNaNを表示しない", () => {
+  const rows = getRecruitmentStatRows({
+    baseStats: { hp: 0, atk: Number.NaN, spd: 5 },
+    hireCost: 0,
+  });
+  const stats = Object.fromEntries(rows.map((row) => [row.key, row.value]));
+
+  assert.equal(stats.hp, 0);
+  assert.equal(stats.spd, 5);
+  assert.equal(stats.cost, 0);
+  assert.equal("atk" in stats, false);
+  assert.equal("def" in stats, false);
+  assert.equal(JSON.stringify(rows).includes("undefined"), false);
+  assert.equal(JSON.stringify(rows).includes("NaN"), false);
+});
+
+test("雇用画面に初期ステータス、費用、特性が表示される", () => {
+  const game = { ...createInitialState(), demonLordLevel: 10 };
+  const markup = renderToStaticMarkup(
+    React.createElement(CommandCenter, {
+      game,
+      onHire: () => {},
+      onBuyItem: () => {},
+      onSellItem: () => {},
+      onSellUnit: () => {},
+      onExpandUnits: () => {},
+      onExpandItems: () => {},
+    }),
+  );
+
+  assert.equal((markup.match(/class="recruitment-stat-grid"/g) ?? []).length, UNIT_TEMPLATES.length);
+  assert.ok(markup.includes('aria-label="煤牙ゴブリンの雇用時ステータス"'));
+  assert.ok(markup.includes("<dt>最大HP</dt><dd>46</dd>"));
+  assert.ok(markup.includes("<dt>攻撃</dt><dd>14</dd>"));
+  assert.ok(markup.includes("<dt>防御</dt><dd>10</dd>"));
+  assert.ok(markup.includes("<dt>速度</dt><dd>12</dd>"));
+  assert.ok(markup.includes("<dt>雇用費</dt><dd>25G</dd>"));
+  assert.ok(markup.includes("小鬼の勘"));
+  assert.equal(markup.includes("undefined"), false);
+  assert.equal(markup.includes("NaN"), false);
+});
+
+test("雇用成功と所持金不足時の既存挙動を維持する", () => {
+  const base = createInitialState();
+  const template = UNIT_TEMPLATES.find((entry) => entry.id === "thorn-kobold");
+  const hired = hireUnit(base, template.id);
+
+  assert.equal(hired.ok, true);
+  assert.equal(hired.state.gold, base.gold - template.hireCost);
+  assert.equal(hired.state.units.length, base.units.length + 1);
+  const added = hired.state.units.find((unit) => unit.templateId === template.id);
+  assert.equal(added.level, 1);
+  assert.equal(added.maxHp, template.baseStats.hp);
+  assert.equal(added.atk, template.baseStats.atk);
+  assert.equal(added.def, template.baseStats.def);
+  assert.equal(added.spd, template.baseStats.spd);
+
+  const insufficient = hireUnit({ ...base, gold: 0 }, template.id);
+  assert.equal(insufficient.ok, false);
+  assert.equal(insufficient.state.gold, 0);
+  assert.equal(insufficient.state.units.length, base.units.length);
 });
 
 test("enemy catalog resolves combat enemies for every dungeon", () => {
