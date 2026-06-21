@@ -12,3 +12,4 @@ Thumbs.db
 .tmp-tests/
 playwright-report/
 test-results/
+.playwright-cli/
