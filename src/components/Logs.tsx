@@ -185,7 +185,7 @@ const BattleLogSection = ({ record, compact = false }: { record: ExpeditionRecor
   if (entries.length === 0) {
     return null;
   }
-  const displayItems = buildCompactCombatLogDisplayItems(entries);
+  const displayItems = buildCompactCombatLogDisplayItems(entries, record.dungeonId);
 
   return (
     <section className={compact ? "combat-log-section is-compact" : "combat-log-section"}>
@@ -233,8 +233,12 @@ const BattleLogSection = ({ record, compact = false }: { record: ExpeditionRecor
         {displayItems.map((item) => {
           if (item.kind === "heading") {
             return (
-              <li key={item.key} className="combat-log-battle-heading">
-                <span>戦闘 {item.battleNumber}</span>
+              <li
+                key={item.key}
+                className={item.isBoss ? "combat-log-battle-heading is-boss" : "combat-log-battle-heading"}
+              >
+                {item.isBoss && <span className="boss-battle-label">ボス戦</span>}
+                <span className="combat-battle-number">戦闘 {item.battleNumber}</span>
                 {item.enemyName && <strong>{item.enemyName}</strong>}
               </li>
             );
@@ -242,9 +246,15 @@ const BattleLogSection = ({ record, compact = false }: { record: ExpeditionRecor
 
           const { entry } = item;
           return (
-            <li key={item.key} className={`combat-log-entry is-${entry.type}`}>
+            <li
+              key={item.key}
+              className={`combat-log-entry is-${entry.type}${item.isBossDefeat ? " is-boss-defeat" : ""}`}
+            >
               <span>{combatLogIcon[entry.type]}</span>
-              <p>{item.displayText}</p>
+              <p>
+                {item.isBossDefeat && <strong className="boss-defeated-label">ボス撃破</strong>}
+                {item.displayText}
+              </p>
             </li>
           );
         })}

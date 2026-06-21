@@ -839,6 +839,24 @@ label {
   font-size: 0.92rem;
 }
 
+.combat-log-battle-heading.is-boss {
+  border-color: rgba(220, 104, 100, 0.58);
+  border-left-color: var(--bad);
+  background: linear-gradient(90deg, rgba(102, 20, 30, 0.72), rgba(46, 20, 28, 0.9) 58%, rgba(214, 166, 76, 0.15));
+  box-shadow: inset 0 0 0 1px rgba(244, 208, 131, 0.1), 0 6px 18px rgba(22, 5, 10, 0.28);
+}
+
+.combat-log-battle-heading.is-boss strong {
+  color: #fff0d0;
+  font-weight: 900;
+}
+
+.combat-log-battle-heading .boss-battle-label {
+  border: 1px solid rgba(255, 183, 179, 0.5);
+  background: rgba(59, 8, 16, 0.88);
+  color: #ffb7b3;
+}
+
 .combat-log-entry {
   display: grid;
   grid-template-columns: 34px 1fr;
@@ -878,6 +896,29 @@ label {
 .combat-log-entry.is-defeatEnemy p {
   color: #c5efbb;
   font-weight: 800;
+}
+
+.combat-log-entry.is-boss-defeat {
+  border-left-color: var(--gold);
+  background: linear-gradient(90deg, rgba(116, 24, 32, 0.6), rgba(214, 166, 76, 0.15), rgba(13, 9, 14, 0.84));
+  box-shadow: inset 0 0 0 1px rgba(244, 208, 131, 0.15);
+}
+
+.combat-log-entry.is-boss-defeat p {
+  color: #fff0d0;
+  font-weight: 900;
+}
+
+.boss-defeated-label {
+  display: inline-block;
+  margin-right: 8px;
+  border: 1px solid rgba(244, 208, 131, 0.46);
+  border-radius: 999px;
+  background: rgba(45, 11, 17, 0.78);
+  color: var(--gold-2);
+  font-size: 0.68rem;
+  line-height: 1.2;
+  padding: 3px 7px;
 }
 
 .combat-log-entry.is-victory {
