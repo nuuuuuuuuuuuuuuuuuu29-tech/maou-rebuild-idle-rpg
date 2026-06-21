@@ -18,6 +18,7 @@ Prioritize small, safe, reviewable changes.
 * Test: `npm.cmd test`
 * Build: `npm.cmd run build`
 * Balance simulation: `npm.cmd run sim:balance -- --trials 1000 --seed 12345`
+* E2E smoke: `npm.cmd run test:e2e:smoke`
 
 ## Current stability rules
 
@@ -30,6 +31,7 @@ Prioritize small, safe, reviewable changes.
 * Prefer deterministic logic for simulations and tests.
 * Do not change unrelated gameplay balance while implementing UI-only changes.
 * Do not introduce new production dependencies unless explicitly approved.
+* Do not commit API keys, tokens, passwords, private keys, or other secrets.
 
 ## Gameplay-sensitive areas
 
@@ -48,6 +50,7 @@ Be especially careful when modifying:
 
 * `npm.cmd test` passes.
 * `npm.cmd run build` passes.
+* For UI or browser-flow changes, `npm.cmd run test:e2e:smoke` passes.
 * If gameplay balance is affected, run:
   `npm.cmd run sim:balance -- --trials 1000 --seed 12345`
 * Report all changed files.
