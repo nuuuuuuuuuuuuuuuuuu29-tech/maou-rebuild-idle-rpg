@@ -105,6 +105,61 @@ test("遠征準備で不足条件と出撃可能状態を確認できる", async
   expect(browserErrors).toEqual([]);
 });
 
+test("遠征準備でレアドロップ目標を切り替え、収集状況を再導出する", async ({ page }) => {
+  const browserErrors = collectBrowserErrors(page);
+  await page.setViewportSize({ width: 375, height: 812 });
+  const uncollectedState = createGameState({ demonLordLevel: 10 });
+  await openGameWithState(page, uncollectedState);
+  await page.getByRole("button", { name: "遠征", exact: true }).click();
+
+  await page.getByRole("button", { name: /灰脈鉱坑/ }).click();
+  const mineGoals = page.getByRole("region", { name: "レアドロップ目標 灰脈鉱坑" });
+  await expect(mineGoals).toContainText("Rare");
+  await expect(mineGoals).toContainText("？？？");
+  await expect(mineGoals).toContainText("未入手 1 / 全1種");
+  await expect(mineGoals).not.toContainText("落王の印片");
+
+  await page.getByRole("button", { name: /熔骨火口/ }).click();
+  const craterGoals = page.getByRole("region", { name: "レアドロップ目標 熔骨火口" });
+  await expect(craterGoals.getByText("Epic", { exact: true })).toHaveCount(2);
+  await expect(craterGoals).toContainText("未入手 3 / 全3種");
+
+  await page.getByRole("button", { name: /煤けた境界村/ }).click();
+  const emptyGoals = page.getByRole("region", { name: "レアドロップ目標 煤けた境界村" });
+  await expect(emptyGoals).toContainText("このダンジョンにレアドロップ候補はありません");
+
+  const goalLayout = await emptyGoals.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return {
+      fitsViewport: rect.left >= 0 && rect.right <= document.documentElement.clientWidth,
+      noHorizontalScroll: document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+    };
+  });
+  expect(goalLayout).toEqual({ fitsViewport: true, noHorizontalScroll: true });
+
+  const collectedState = createGameState({
+    demonLordLevel: 10,
+    collection: {
+      ...uncollectedState.collection,
+      items: [...uncollectedState.collection.items, "fallen-signet"],
+    },
+  });
+  await openGameWithState(page, collectedState);
+  await page.getByRole("button", { name: "遠征", exact: true }).click();
+  await page.getByRole("button", { name: /灰脈鉱坑/ }).click();
+
+  const collectedGoals = page.getByRole("region", { name: "レアドロップ目標 灰脈鉱坑" });
+  await expect(collectedGoals).toContainText("落王の印片");
+  await expect(collectedGoals).toContainText("入手済み");
+  await expect(collectedGoals).toContainText("このダンジョンのレアドロップは収集済みです");
+
+  await page.reload();
+  await page.getByRole("button", { name: "遠征", exact: true }).click();
+  await page.getByRole("button", { name: /灰脈鉱坑/ }).click();
+  await expect(page.getByRole("region", { name: "レアドロップ目標 灰脈鉱坑" })).toContainText("落王の印片");
+  expect(browserErrors).toEqual([]);
+});
+
 test("時計制御で遠征を完了し報酬と作戦記録を作成する", async ({ page }) => {
   const browserErrors = collectBrowserErrors(page);
   await page.clock.install({ time: new Date("2026-05-13T12:00:00Z") });
