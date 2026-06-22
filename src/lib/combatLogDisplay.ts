@@ -1,3 +1,4 @@
+import { DUNGEONS } from "../data/dungeons";
 import type { CombatLogEntry, ExpeditionRecord } from "../types/game";
 
 export type CombatLogEntryView = NonNullable<ExpeditionRecord["battleLog"]>[number];
@@ -8,6 +9,7 @@ export type CombatLogDisplayItem =
       key: string;
       battleNumber: number;
       enemyName?: string;
+      isBoss: boolean;
     }
   | {
       kind: "entry";
@@ -16,6 +18,7 @@ export type CombatLogDisplayItem =
       index: number;
       displayText: string;
       mergedDamageEntry?: CombatLogEntryView;
+      isBossDefeat: boolean;
     };
 
 export const getEncounterEnemyName = (entry: CombatLogEntryView) => {
@@ -63,7 +66,19 @@ const isMatchingDamageEntry = (attack: CombatLogEntry, next?: CombatLogEntry) =>
 const withHpChangeText = (attack: CombatLogEntry, damage: CombatLogEntry) =>
   `${attack.text}（HP ${damage.hpBefore} → ${damage.hpAfter}）`;
 
-export const buildCombatLogDisplayItems = (entries: CombatLogEntryView[]): CombatLogDisplayItem[] => {
+export const isBossCombatLogEntry = (entry: CombatLogEntryView, dungeonId?: string) => {
+  if (!dungeonId || !entry.enemyId) {
+    return false;
+  }
+
+  const bossId = DUNGEONS.find((dungeon) => dungeon.id === dungeonId)?.boss.id;
+  return bossId !== undefined && entry.enemyId === bossId;
+};
+
+export const buildCombatLogDisplayItems = (
+  entries: CombatLogEntryView[],
+  dungeonId?: string,
+): CombatLogDisplayItem[] => {
   let battleNumber = 0;
   const items: CombatLogDisplayItem[] = [];
 
@@ -77,6 +92,7 @@ export const buildCombatLogDisplayItems = (entries: CombatLogEntryView[]): Comba
         key: `combat-heading-${entry.id}-${index}`,
         battleNumber,
         enemyName: getEncounterEnemyName(entry),
+        isBoss: isBossCombatLogEntry(entry, dungeonId),
       });
     }
 
@@ -89,6 +105,7 @@ export const buildCombatLogDisplayItems = (entries: CombatLogEntryView[]): Comba
         index,
         displayText: withHpChangeText(entry, next),
         mergedDamageEntry: next,
+        isBossDefeat: false,
       });
       index += 1;
       continue;
@@ -100,6 +117,7 @@ export const buildCombatLogDisplayItems = (entries: CombatLogEntryView[]): Comba
       entry,
       index,
       displayText: entry.text,
+      isBossDefeat: entry.type === "defeatEnemy" && isBossCombatLogEntry(entry, dungeonId),
     });
   }
 

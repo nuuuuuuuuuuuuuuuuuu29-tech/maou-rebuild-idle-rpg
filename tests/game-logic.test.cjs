@@ -7,7 +7,10 @@ const { createInitialState, createUnit } = require("../.tmp-tests/src/lib/progre
 const { advanceGame, claimCollectionReward, hireUnit, startExpedition } = require("../.tmp-tests/src/lib/expedition.js");
 const { simulateExpedition } = require("../.tmp-tests/src/lib/battle.js");
 const { getDungeonMasteryLevel } = require("../.tmp-tests/src/lib/mastery.js");
-const { buildCombatLogDisplayItems } = require("../.tmp-tests/src/lib/combatLogDisplay.js");
+const {
+  buildCombatLogDisplayItems,
+  isBossCombatLogEntry,
+} = require("../.tmp-tests/src/lib/combatLogDisplay.js");
 const { getRecruitmentStatRows } = require("../.tmp-tests/src/lib/recruitment.js");
 const CommandCenter = require("../.tmp-tests/src/components/CommandCenter.js").default;
 const {
@@ -379,6 +382,81 @@ test("combat log display does not compact across battle boundaries or missing lo
   assert.equal(buildCombatLogDisplayItems([]).length, 0);
   assert.equal(entries.find((item) => item.entry.id === "attack-1").mergedDamageEntry, undefined);
   assert.equal(entries.find((item) => item.entry.id === "late-hp-1").entry.type, "damage");
+});
+
+test("combat log display identifies boss encounters and defeats from dungeon enemy IDs", () => {
+  const dungeon = dungeonById("ash-border-village");
+  const normalEnemy = dungeon.enemies[0];
+  const boss = dungeon.boss;
+  const displayItems = buildCombatLogDisplayItems(
+    [
+      makeCombatEntry("normal-encounter", "encounter", {
+        enemyId: normalEnemy.id,
+        actorName: normalEnemy.name,
+      }),
+      makeCombatEntry("normal-defeat", "defeatEnemy", {
+        enemyId: normalEnemy.id,
+        targetName: normalEnemy.name,
+      }),
+      makeCombatEntry("boss-encounter", "encounter", {
+        enemyId: boss.id,
+        actorName: boss.name,
+      }),
+      makeCombatEntry("boss-attack", "allyAttack", {
+        enemyId: boss.id,
+        actorName: "Ally",
+        targetName: boss.name,
+        hpBefore: 12,
+        hpAfter: 0,
+      }),
+      makeCombatEntry("boss-damage", "damage", {
+        actorName: boss.name,
+        hpBefore: 12,
+        hpAfter: 0,
+      }),
+      makeCombatEntry("boss-defeat", "defeatEnemy", {
+        enemyId: boss.id,
+        targetName: boss.name,
+      }),
+      makeCombatEntry("ally-defeat", "defeatAlly"),
+      makeCombatEntry("victory", "victory"),
+      makeCombatEntry("retreat", "retreat"),
+      makeCombatEntry("reward", "reward"),
+    ],
+    dungeon.id,
+  );
+  const headings = displayItems.filter((item) => item.kind === "heading");
+  const entries = displayItems.filter((item) => item.kind === "entry");
+
+  assert.equal(isBossCombatLogEntry(makeCombatEntry("boss", "encounter", { enemyId: boss.id }), dungeon.id), true);
+  assert.equal(
+    isBossCombatLogEntry(makeCombatEntry("normal", "encounter", { enemyId: normalEnemy.id }), dungeon.id),
+    false,
+  );
+  assert.deepEqual(
+    headings.map((item) => ({ number: item.battleNumber, name: item.enemyName, isBoss: item.isBoss })),
+    [
+      { number: 1, name: normalEnemy.name, isBoss: false },
+      { number: 2, name: boss.name, isBoss: true },
+    ],
+  );
+  assert.equal(entries.find((item) => item.entry.id === "normal-defeat").isBossDefeat, false);
+  assert.equal(entries.find((item) => item.entry.id === "boss-defeat").isBossDefeat, true);
+  assert.match(entries.find((item) => item.entry.id === "boss-attack").displayText, /HP 12 → 0/);
+  assert.deepEqual(
+    entries.slice(-4).map((item) => item.entry.type),
+    ["defeatAlly", "victory", "retreat", "reward"],
+  );
+});
+
+test("boss display falls back to normal for incomplete or unknown log data", () => {
+  assert.equal(isBossCombatLogEntry(makeCombatEntry("missing-id", "encounter"), "ash-border-village"), false);
+  assert.equal(
+    isBossCombatLogEntry(makeCombatEntry("unknown-dungeon", "encounter", { enemyId: "village-warden" }), "missing"),
+    false,
+  );
+  assert.doesNotThrow(() => buildCombatLogDisplayItems([makeCombatEntry("old", "encounter")], "missing"));
+  assert.equal(buildCombatLogDisplayItems([makeCombatEntry("old", "encounter")], "missing")[0].isBoss, false);
 });
 
 test("遠征開始でアクティブ遠征とユニット状態が更新される", () => {
