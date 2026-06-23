@@ -1508,14 +1508,27 @@ label {
 }
 
 .rare-drop-preview {
-  display: grid;
-  grid-template-columns: minmax(180px, 240px) 1fr;
-  gap: 12px;
   margin-top: 12px;
   border: 1px solid rgba(244, 208, 131, 0.24);
   border-radius: 8px;
   background: rgba(18, 10, 18, 0.68);
   padding: 12px;
+}
+
+.rare-drop-preview.is-complete {
+  border-color: rgba(107, 184, 170, 0.38);
+}
+
+.rare-drop-goal-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.rare-drop-goal-heading > div {
+  min-width: 0;
 }
 
 .trait-preview {
@@ -1540,22 +1553,113 @@ label {
   line-height: 1.6;
 }
 
-.rare-drop-preview strong {
+.rare-drop-goal-heading strong {
   color: var(--gold-2);
 }
 
 .rare-drop-preview small,
-.rare-candidate-empty {
+.rare-drop-goal-empty {
   display: block;
   color: var(--muted);
   line-height: 1.6;
 }
 
-.rare-candidate-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+.rare-drop-goal-count {
+  flex: 0 0 auto;
+  border: 1px solid rgba(244, 208, 131, 0.28);
+  border-radius: 999px;
+  background: rgba(214, 166, 76, 0.08);
+  color: #f3dfac;
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  font-weight: 900;
+}
+
+.rare-drop-goal-list {
+  margin: 12px 0 0;
+  border-top: 1px solid rgba(123, 78, 80, 0.38);
+  padding: 0;
+  list-style: none;
+}
+
+.rare-drop-goal-item {
+  display: grid;
+  grid-template-columns: minmax(68px, auto) minmax(0, 1fr) auto;
   align-items: center;
+  gap: 8px 12px;
+  border-bottom: 1px solid rgba(123, 78, 80, 0.32);
+  border-left: 3px solid transparent;
+  padding: 9px 6px 9px 10px;
+}
+
+.rare-drop-goal-item.is-unobtained {
+  background: rgba(214, 166, 76, 0.05);
+  border-left-color: rgba(244, 208, 131, 0.58);
+}
+
+.rare-drop-goal-item.is-obtained {
+  color: var(--muted);
+}
+
+.rare-drop-goal-rarity {
+  border: 1px solid rgba(244, 208, 131, 0.46);
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: #fff2c8;
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-align: center;
+}
+
+.rare-drop-goal-item.rarity-epic .rare-drop-goal-rarity {
+  border-color: rgba(193, 151, 242, 0.72);
+  color: #efe2ff;
+}
+
+.rare-drop-goal-item.rarity-legendary .rare-drop-goal-rarity {
+  border-color: rgba(255, 219, 117, 0.88);
+  background: rgba(214, 166, 76, 0.12);
+  color: #fff7d0;
+}
+
+.rare-drop-goal-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 800;
+}
+
+.rare-drop-goal-name > span {
+  display: inline-block;
+  min-width: 1.5em;
+  margin-right: 4px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.rare-drop-goal-status {
+  color: #f3d4a2;
+  font-size: 0.78rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.rare-drop-goal-item.is-obtained .rare-drop-goal-status {
+  color: #b8ded4;
+}
+
+.rare-drop-goal-summary,
+.rare-drop-goal-empty {
+  margin: 10px 0 0;
+}
+
+.rare-drop-goal-summary {
+  color: #f3d4a2;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.rare-drop-goal-summary.is-complete {
+  color: #b8ded4;
 }
 
 .sub-heading {
@@ -2384,10 +2488,6 @@ label {
   .sub-heading {
     align-items: flex-start;
     flex-direction: column;
-  }
-
-  .rare-drop-preview {
-    grid-template-columns: 1fr;
   }
 
   .trait-preview {

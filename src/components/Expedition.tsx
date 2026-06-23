@@ -7,7 +7,7 @@ import { getExpeditionGuideState } from "../lib/expeditionGuide";
 import { evaluateExpeditionRisk, getRecommendedAction, getRiskLabel, getRiskReasons } from "../lib/expeditionRisk";
 import { getFirstPlayableDungeon, getRecommendedUnits, getUnitScore } from "../lib/guidance";
 import { formatDungeonMasteryBonus, getDungeonMasteryInfo } from "../lib/mastery";
-import { getRareDropCandidates } from "../lib/rareDrops";
+import { getRareDropGoalSummary } from "../lib/rareDrops";
 import { formatPartyTraitSummary, getPartyTraitModifiers, getUnitTrait } from "../lib/traits";
 import type { GameState, GameUnit, StrategyId } from "../types/game";
 
@@ -28,7 +28,10 @@ const Expedition = ({ game, now, onStart }: ExpeditionProps) => {
   const progress = getActiveProgress(game, now);
   const selectedDungeon = DUNGEONS.find((dungeon) => dungeon.id === dungeonId) ?? DUNGEONS[0];
   const selectedMastery = getDungeonMasteryInfo(game, selectedDungeon.id);
-  const rareDropCandidates = useMemo(() => getRareDropCandidates(selectedDungeon.rewards, 3), [selectedDungeon]);
+  const rareDropGoals = useMemo(
+    () => getRareDropGoalSummary(selectedDungeon.rewards, game.collection.items),
+    [game.collection.items, selectedDungeon],
+  );
   const selectableUnits = useMemo(() => game.units.filter((unit) => unit.status === "idle"), [game.units]);
   const recommendedUnits = useMemo(() => getRecommendedUnits(game), [game]);
   const recommendedUnitIds = useMemo(() => new Set(recommendedUnits.map((unit) => unit.id)), [recommendedUnits]);
@@ -227,28 +230,57 @@ const Expedition = ({ game, now, onStart }: ExpeditionProps) => {
           <small>{selectedUnitIds.length > 0 ? partyTraitSummary : "ユニットを選択すると特性補正を確認できます。"}</small>
         </div>
 
-        <div className="rare-drop-preview">
-          <div>
-            <strong>主な希少候補</strong>
-            <small>
-              {selectedMastery.level > 0
-                ? "熟練度により、希少品の気配がわずかに濃くなっています。"
-                : "熟練度が上がると、希少品の気配が少しずつ濃くなります。"}
-            </small>
+        <section
+          className={rareDropGoals.allObtained ? "rare-drop-preview is-complete" : "rare-drop-preview"}
+          aria-label={`レアドロップ目標 ${selectedDungeon.name}`}
+          aria-live="polite"
+        >
+          <div className="rare-drop-goal-heading">
+            <div>
+              <strong>レアドロップ目標</strong>
+              <small>
+                {selectedMastery.level > 0
+                  ? "熟練度により、希少品の気配がわずかに濃くなっています。"
+                  : "熟練度が上がると、希少品の気配が少しずつ濃くなります。"}
+              </small>
+            </div>
+            <span className="rare-drop-goal-count">
+              {rareDropGoals.totalCount > 0
+                ? `入手済み ${rareDropGoals.obtainedCount}/${rareDropGoals.totalCount}種`
+                : "候補なし"}
+            </span>
           </div>
-          <div className="rare-candidate-row">
-            {rareDropCandidates.length > 0 ? (
-              rareDropCandidates.map((item) => (
-                <span key={item.itemId} className={`loot-chip rarity-${item.rarity}`}>
-                  {item.icon} {item.name}
-                  <em>{item.label}</em>
-                </span>
-              ))
-            ) : (
-              <span className="rare-candidate-empty">この遠征では基礎物資が中心です。</span>
-            )}
-          </div>
-        </div>
+          {rareDropGoals.totalCount > 0 ? (
+            <>
+              <ul className="rare-drop-goal-list">
+                {rareDropGoals.items.map((item) => (
+                  <li
+                    key={item.itemId}
+                    className={[
+                      "rare-drop-goal-item",
+                      `rarity-${item.rarity}`,
+                      item.obtained ? "is-obtained" : "is-unobtained",
+                    ].join(" ")}
+                  >
+                    <span className="rare-drop-goal-rarity">{item.label}</span>
+                    <span className="rare-drop-goal-name">
+                      {item.displayIcon && <span aria-hidden="true">{item.displayIcon}</span>}
+                      {item.displayName}
+                    </span>
+                    <span className="rare-drop-goal-status">{item.obtained ? "入手済み" : "未入手"}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className={rareDropGoals.allObtained ? "rare-drop-goal-summary is-complete" : "rare-drop-goal-summary"}>
+                {rareDropGoals.allObtained
+                  ? "このダンジョンのレアドロップは収集済みです"
+                  : `未入手 ${rareDropGoals.remainingCount} / 全${rareDropGoals.totalCount}種`}
+              </p>
+            </>
+          ) : (
+            <p className="rare-drop-goal-empty">このダンジョンにレアドロップ候補はありません</p>
+          )}
+        </section>
 
         <div className="form-block">
           <div className="sub-heading">

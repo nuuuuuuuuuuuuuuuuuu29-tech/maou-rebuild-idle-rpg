@@ -1,5 +1,5 @@
 import { DUNGEONS } from "../data/dungeons";
-import { getItemDefinition } from "../data/items";
+import { ITEM_DEFINITIONS, getItemDefinition } from "../data/items";
 import type { DungeonRewardItem, Rarity, RewardItemStack } from "../types/game";
 
 export const RARE_DROP_RARITIES = new Set<Rarity>(["rare", "epic", "legendary"]);
@@ -13,6 +13,25 @@ const rarityRank: Record<Rarity, number> = {
   epic: 3,
   legendary: 4,
 };
+
+const itemDefinitionsById = new Map(ITEM_DEFINITIONS.map((item) => [item.id, item]));
+
+export interface RareDropGoalItem {
+  itemId: string;
+  displayName: string;
+  displayIcon: string;
+  rarity: Rarity;
+  label: string;
+  obtained: boolean;
+}
+
+export interface RareDropGoalSummary {
+  items: RareDropGoalItem[];
+  obtainedCount: number;
+  remainingCount: number;
+  totalCount: number;
+  allObtained: boolean;
+}
 
 export const getRarityLabel = (rarity: Rarity) => {
   const labels: Record<Rarity, string> = {
@@ -69,6 +88,54 @@ export const getRareDropCandidates = (rewards: DungeonRewardItem[], limit = 3) =
     .filter((item) => isRareDropRarity(item.rarity))
     .sort((a, b) => rarityRank[b.rarity] - rarityRank[a.rarity] || a.name.localeCompare(b.name))
     .slice(0, limit);
+
+export const getRareDropGoalSummary = (
+  rewards: readonly (DungeonRewardItem | null | undefined)[] | null | undefined,
+  obtainedItemIds: Iterable<string> | null | undefined,
+): RareDropGoalSummary => {
+  const obtained = new Set(obtainedItemIds ?? []);
+  const seen = new Set<string>();
+  const items = (rewards ?? [])
+    .flatMap<RareDropGoalItem>((reward) => {
+      if (!reward || typeof reward.itemId !== "string" || seen.has(reward.itemId)) {
+        return [];
+      }
+
+      const item = itemDefinitionsById.get(reward.itemId);
+      if (!item || !isRareDropRarity(item.rarity)) {
+        return [];
+      }
+
+      seen.add(item.id);
+      const isObtained = obtained.has(item.id);
+      return [
+        {
+          itemId: item.id,
+          displayName: isObtained ? item.name : "？？？",
+          displayIcon: isObtained ? item.icon : "",
+          rarity: item.rarity,
+          label: getRarityLabel(item.rarity),
+          obtained: isObtained,
+        },
+      ];
+    })
+    .sort(
+      (a, b) =>
+        Number(a.obtained) - Number(b.obtained) ||
+        rarityRank[b.rarity] - rarityRank[a.rarity] ||
+        a.itemId.localeCompare(b.itemId),
+    );
+  const obtainedCount = items.filter((item) => item.obtained).length;
+  const totalCount = items.length;
+
+  return {
+    items,
+    obtainedCount,
+    remainingCount: totalCount - obtainedCount,
+    totalCount,
+    allObtained: totalCount > 0 && obtainedCount === totalCount,
+  };
+};
 
 export const getDungeonRareDropCandidates = (dungeonId: string, limit = 3) => {
   const dungeon = DUNGEONS.find((entry) => entry.id === dungeonId);
