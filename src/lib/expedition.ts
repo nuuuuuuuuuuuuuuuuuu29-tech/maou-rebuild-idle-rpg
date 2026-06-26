@@ -3,7 +3,7 @@ import { getDungeon } from "../data/dungeons";
 import { getItemDefinition } from "../data/items";
 import { getStrategy } from "../data/strategies";
 import { getUnitTemplate } from "../data/units";
-import type { GameState, StrategyId } from "../types/game";
+import type { GameState, GameUnit, StrategyId } from "../types/game";
 import { evaluateAchievements, getCollectionRewardProgress, updateBossRecordsForRecord } from "./achievements";
 import { simulateExpedition } from "./battle";
 import { formatDungeonMasteryBonus, getDungeonMasteryInfo, updateDungeonMasteryForRecord } from "./mastery";
@@ -40,6 +40,29 @@ const rarityBonus = {
 
 const totalItemQuantity = (items: { quantity: number }[]) =>
   items.reduce((total, item) => total + item.quantity, 0);
+
+const restoreSurvivingParticipants = (
+  units: GameUnit[],
+  participantIds: Set<string>,
+  battlePartyById: Map<string, GameUnit>,
+) =>
+  units.map((unit) => {
+    if (!participantIds.has(unit.id)) {
+      return unit;
+    }
+
+    const battleUnit = battlePartyById.get(unit.id);
+    if (!battleUnit || battleUnit.currentHp <= 0) {
+      return unit;
+    }
+
+    return {
+      ...unit,
+      currentHp: unit.maxHp,
+      status: "idle" as const,
+      recoveryUntil: undefined,
+    };
+  });
 
 export const formatSeconds = (totalSeconds: number) => {
   const seconds = Math.max(0, Math.ceil(totalSeconds));
@@ -134,6 +157,7 @@ const finishExpedition = (state: GameState, now: number): GameState => {
     const mergedUnit = battleUnit ?? unit;
     return participantIds.has(unit.id) ? applyUnitExperience(mergedUnit, rewards.unitExp) : mergedUnit;
   });
+  units = restoreSurvivingParticipants(units, participantIds, partyById);
   units = [...units, ...acceptedRescues];
 
   const levelUpLogs = units
