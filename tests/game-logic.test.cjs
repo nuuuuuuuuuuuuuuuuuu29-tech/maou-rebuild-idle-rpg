@@ -45,6 +45,7 @@ const {
 
 const titleById = (id) => TITLES.find((title) => title.id === id);
 const dungeonById = (id) => DUNGEONS.find((dungeon) => dungeon.id === id);
+const templateById = (id) => UNIT_TEMPLATES.find((template) => template.id === id);
 const riskRank = { safe: 0, caution: 1, danger: 2, reckless: 3 };
 
 const makeRecord = (overrides = {}) => ({
@@ -1006,4 +1007,139 @@ test("遠征準備ガイドは配下未選択と準備完了を区別する", ()
 
 test("GameState.versionはv0.6でも5のまま", () => {
   assert.equal(createInitialState().version, 5);
+});
+
+test("surviving expedition participants return at full HP after battle damage", () => {
+  withFixedRandom(0.01, () => {
+    const unit = makeStrongUnit("cinder-goblin", "survivor-no-level");
+    const state = {
+      ...createInitialState(),
+      demonLordLevel: 10,
+      maxPartySize: 4,
+      units: [unit],
+    };
+    const started = startExpedition(state, "ash-border-village", [unit.id], "balanced");
+    assert.equal(started.ok, true);
+
+    const finished = advanceGame(started.state, started.state.activeExpedition.endsAt + 1);
+    const finishedUnit = finished.units.find((candidate) => candidate.id === unit.id);
+    const record = finished.records[0];
+    const hpDamageEntries = record.battleLog.filter(
+      (entry) => entry.type === "damage" && entry.actorName === unit.name && entry.hpAfter < entry.hpBefore,
+    );
+    const finalBattleHp = hpDamageEntries[hpDamageEntries.length - 1].hpAfter;
+
+    assert.equal(finishedUnit.level, unit.level);
+    assert.equal(finishedUnit.currentHp, finishedUnit.maxHp);
+    assert.equal(finishedUnit.status, "idle");
+    assert.equal(finishedUnit.recoveryUntil, undefined);
+    assert.ok(hpDamageEntries.length > 0);
+    assert.ok(finalBattleHp > 0);
+    assert.ok(finalBattleHp < finishedUnit.maxHp);
+    assert.ok(record.rewards.unitExp > 0);
+    assert.ok(record.battleLog.length > 0);
+  });
+});
+
+test("surviving expedition participants heal to leveled max HP while records keep battle HP", () => {
+  withFixedRandom(0.01, () => {
+    const base = createInitialState();
+    const unit = {
+      ...base.units[0],
+      exp: base.units[0].expToNext - 1,
+    };
+    const state = {
+      ...base,
+      units: [unit],
+    };
+    const started = startExpedition(state, "ash-border-village", [unit.id], "balanced");
+    assert.equal(started.ok, true);
+
+    const finished = advanceGame(started.state, started.state.activeExpedition.endsAt + 1);
+    const finishedUnit = finished.units.find((candidate) => candidate.id === unit.id);
+    const record = finished.records[0];
+    const hpDamageEntries = record.battleLog.filter(
+      (entry) => entry.type === "damage" && entry.actorName === unit.name && entry.hpAfter < entry.hpBefore,
+    );
+    const finalBattleHp = hpDamageEntries[hpDamageEntries.length - 1].hpAfter;
+
+    assert.ok(finishedUnit.level > unit.level);
+    assert.ok(finishedUnit.maxHp > unit.maxHp);
+    assert.equal(finishedUnit.currentHp, finishedUnit.maxHp);
+    assert.equal(finishedUnit.status, "idle");
+    assert.equal(finishedUnit.recoveryUntil, undefined);
+    assert.ok(finalBattleHp > 0);
+    assert.ok(finalBattleHp < finishedUnit.currentHp);
+    assert.equal(finished.activeExpedition, undefined);
+    assert.ok(finished.gold > state.gold);
+    assert.ok(finished.territoryLiberation > state.territoryLiberation);
+    assert.ok(finished.demonLordExp > state.demonLordExp || finished.demonLordLevel > state.demonLordLevel);
+    assert.ok(finished.dungeonMastery.find((entry) => entry.dungeonId === "ash-border-village").clearCount >= 1);
+    assert.equal(finished.version, 5);
+  });
+});
+
+test("downed expedition participants stay downed after experience and keep recovery timer", () => {
+  withFixedRandom(0.99, () => {
+    const base = createInitialState();
+    const unit = {
+      ...base.units[0],
+      currentHp: 1,
+      exp: base.units[0].expToNext - 1,
+    };
+    const state = {
+      ...base,
+      units: [unit],
+    };
+    const started = startExpedition(state, "ash-border-village", [unit.id], "balanced");
+    assert.equal(started.ok, true);
+    const expectedRecoveryUntil =
+      started.state.activeExpedition.endsAt + templateById(unit.templateId).recoverySeconds * 1000;
+
+    const finished = advanceGame(started.state, started.state.activeExpedition.endsAt + 1);
+    const finishedUnit = finished.units.find((candidate) => candidate.id === unit.id);
+    const record = finished.records[0];
+    const downedDamage = record.battleLog.find(
+      (entry) => entry.type === "damage" && entry.actorName === unit.name && entry.hpAfter === 0,
+    );
+
+    assert.ok(finishedUnit.level > unit.level);
+    assert.equal(finishedUnit.currentHp, 0);
+    assert.equal(finishedUnit.status, "downed");
+    assert.equal(finishedUnit.recoveryUntil, expectedRecoveryUntil);
+    assert.ok(downedDamage);
+    assert.equal(finished.version, 5);
+  });
+});
+
+test("non-participating injured units are not changed when an expedition finishes", () => {
+  withFixedRandom(0.01, () => {
+    const participant = makeStrongUnit("cinder-goblin", "participant");
+    const idleBystander = {
+      ...createUnit("thorn-kobold", { id: "idle-bystander" }),
+      currentHp: 7,
+      recoveryUntil: 9_999_999_999_999,
+    };
+    const downedBystander = {
+      ...createUnit("dusk-batkin", { id: "downed-bystander" }),
+      currentHp: 0,
+      status: "downed",
+      recoveryUntil: 9_999_999_999_999,
+    };
+    const state = {
+      ...createInitialState(),
+      demonLordLevel: 10,
+      maxPartySize: 4,
+      units: [participant, idleBystander, downedBystander],
+    };
+    const started = startExpedition(state, "ash-border-village", [participant.id], "balanced");
+    assert.equal(started.ok, true);
+
+    const finished = advanceGame(started.state, started.state.activeExpedition.endsAt + 1);
+
+    assert.deepEqual(finished.units.find((unit) => unit.id === idleBystander.id), idleBystander);
+    assert.deepEqual(finished.units.find((unit) => unit.id === downedBystander.id), downedBystander);
+    assert.equal(finished.units.find((unit) => unit.id === participant.id).currentHp, participant.maxHp);
+    assert.equal(finished.version, 5);
+  });
 });
