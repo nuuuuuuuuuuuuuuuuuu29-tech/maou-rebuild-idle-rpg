@@ -9,6 +9,7 @@ import type {
   ExpeditionState,
   GameUnit,
 } from "../types/game";
+import { randomRange, type Rng } from "./rng";
 
 interface CombatReportInput {
   active: ExpeditionState;
@@ -17,6 +18,7 @@ interface CombatReportInput {
   finalParty: GameUnit[];
   status: ExpeditionRecord["status"];
   rewards: ExpeditionRewards;
+  rng: Rng;
 }
 
 interface CombatReport {
@@ -39,31 +41,7 @@ interface RuntimeEnemy {
   hp: number;
 }
 
-type Rng = () => number;
-
 const clampHp = (value: number) => Math.max(0, Math.round(value));
-
-const hashSeed = (value: string) => {
-  let hash = 2166136261;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return hash >>> 0;
-};
-
-const createRng = (seedText: string): Rng => {
-  let seed = hashSeed(seedText) || 1;
-  return () => {
-    seed += 0x6d2b79f5;
-    let value = seed;
-    value = Math.imul(value ^ (value >>> 15), value | 1);
-    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
-    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
-  };
-};
-
-const randomRange = (rng: Rng, min: number, max: number) => min + rng() * (max - min);
 
 const weightedPick = (enemies: EnemyCharacterDefinition[], rng: Rng) => {
   const totalWeight = enemies.reduce((sum, enemy) => sum + Math.max(1, enemy.weight), 0);
@@ -209,6 +187,7 @@ export const createCombatReport = ({
   finalParty,
   status,
   rewards,
+  rng,
 }: CombatReportInput): CombatReport => {
   if (initialParty.length === 0) {
     return {
@@ -225,7 +204,6 @@ export const createCombatReport = ({
 
   const logs: CombatLogEntry[] = [];
   const indexRef = { value: 0 };
-  const rng = createRng(`${active.id}:${dungeon.id}:${status}:${active.startedAt}:${active.endsAt}`);
   const party = makeRuntimeParty(initialParty);
   const enemies = selectEncounterEnemies(dungeon, status, rng);
   const encountered = new Map<string, CombatEnemySnapshot>();

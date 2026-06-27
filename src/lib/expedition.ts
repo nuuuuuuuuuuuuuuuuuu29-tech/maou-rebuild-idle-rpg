@@ -5,7 +5,7 @@ import { getStrategy } from "../data/strategies";
 import { getUnitTemplate } from "../data/units";
 import type { GameState, GameUnit, StrategyId } from "../types/game";
 import { evaluateAchievements, getCollectionRewardProgress, updateBossRecordsForRecord } from "./achievements";
-import { simulateExpedition } from "./battle";
+import { simulateExpedition, simulateExpeditionV1 } from "./battle";
 import { formatDungeonMasteryBonus, getDungeonMasteryInfo, updateDungeonMasteryForRecord } from "./mastery";
 import {
   addInventoryStacks,
@@ -118,13 +118,15 @@ export const getActiveExpeditionLogs = (state: GameState, now: number) => {
   }));
 };
 
-const finishExpedition = (state: GameState, now: number): GameState => {
+const finishExpedition = (state: GameState, now: number, simulationSeed?: string): GameState => {
   if (!state.activeExpedition || state.activeExpedition.endsAt > now) {
     return state;
   }
 
   const active = state.activeExpedition;
-  const simulation = simulateExpedition(state, active);
+  const simulation = simulationSeed === undefined
+    ? simulateExpedition(state, active)
+    : simulateExpeditionV1(state, active, simulationSeed);
   const masteryBefore = getDungeonMasteryInfo(state, active.dungeonId);
   const masteryApplies = simulation.record.status === "success" && masteryBefore.level > 0;
   const goldWithMastery = masteryApplies
@@ -303,11 +305,17 @@ const finishExpedition = (state: GameState, now: number): GameState => {
   return next;
 };
 
-export const advanceGame = (state: GameState, now: number): GameState => {
+const advanceGameInternal = (state: GameState, now: number, simulationSeed?: string): GameState => {
   const recovered = recoverUnits(state, now);
-  const finished = finishExpedition(recovered, now);
+  const finished = finishExpedition(recovered, now, simulationSeed);
   return recoverUnits(finished, now);
 };
+
+export const advanceGame = (state: GameState, now: number): GameState =>
+  advanceGameInternal(state, now);
+
+export const advanceGameWithSimulationSeed = (state: GameState, now: number, seed: string): GameState =>
+  advanceGameInternal(state, now, seed);
 
 export const startExpedition = (
   state: GameState,

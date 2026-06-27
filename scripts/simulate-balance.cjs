@@ -104,7 +104,7 @@ const loadCompiled = (relativePath) => {
 const { DUNGEONS } = loadCompiled("data/dungeons.js");
 const { STRATEGIES } = loadCompiled("data/strategies.js");
 const { createInitialState, createUnit, getDemonExpToNext, getMaxPartySize } = loadCompiled("lib/progression.js");
-const { advanceGame, getAdjustedDuration } = loadCompiled("lib/expedition.js");
+const { advanceGameWithSimulationSeed, getAdjustedDuration } = loadCompiled("lib/expedition.js");
 const { getDungeonMasteryLevel } = loadCompiled("lib/mastery.js");
 const { isRareDropItem } = loadCompiled("lib/rareDrops.js");
 const { getPartyTraitModifiers } = loadCompiled("lib/traits.js");
@@ -211,37 +211,6 @@ const parseArgs = (argv) => {
   return options;
 };
 
-const hashSeed = (value) => {
-  const text = String(value);
-  let hash = 2166136261;
-  for (let index = 0; index < text.length; index += 1) {
-    hash ^= text.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return hash >>> 0;
-};
-
-const mulberry32 = (seed) => {
-  let state = seed >>> 0;
-  return () => {
-    state += 0x6d2b79f5;
-    let value = state;
-    value = Math.imul(value ^ (value >>> 15), value | 1);
-    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
-    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
-  };
-};
-
-const withSeededRandom = (seed, fn) => {
-  const originalRandom = Math.random;
-  Math.random = mulberry32(hashSeed(seed));
-  try {
-    return fn();
-  } finally {
-    Math.random = originalRandom;
-  }
-};
-
 const round = (value, digits = 2) => {
   const base = 10 ** digits;
   return Math.round((value + Number.EPSILON) * base) / base;
@@ -330,7 +299,7 @@ const makeActiveExpedition = (state, scenario, strategy, trial) => {
 const countTrapLikeEvents = (record) =>
   record.logs.filter((log) => log.type === "info" && log.message.includes("階:")).length;
 
-const runTrial = (scenario, strategy, trial) => {
+const runTrial = (scenario, strategy, trial, rootSeed) => {
   const state = makeState(scenario);
   const activeExpedition = makeActiveExpedition(state, scenario, strategy, trial);
   const participantIds = new Set(activeExpedition.unitIds);
@@ -344,7 +313,8 @@ const runTrial = (scenario, strategy, trial) => {
     },
   };
 
-  const finished = advanceGame(stateWithActive, activeExpedition.endsAt + 1);
+  const trialSeed = `${rootSeed}|${scenario.id}|${strategy}|${trial}`;
+  const finished = advanceGameWithSimulationSeed(stateWithActive, activeExpedition.endsAt + 1, trialSeed);
   const record = finished.records[0];
   const rewards = record.rewards ?? {
     gold: 0,
@@ -365,7 +335,7 @@ const runTrial = (scenario, strategy, trial) => {
   };
 };
 
-const summarizeScenario = (scenario, strategy, trials) => {
+const summarizeScenario = (scenario, strategy, trials, rootSeed) => {
   const dungeon = dungeonById.get(scenario.dungeonId);
   const strategyDefinition = strategyById.get(strategy);
   const profile = PARTY_PROFILES[scenario.profileId];
@@ -390,7 +360,7 @@ const summarizeScenario = (scenario, strategy, trials) => {
   };
 
   for (let trial = 0; trial < trials; trial += 1) {
-    const result = runTrial(scenario, strategy, trial);
+    const result = runTrial(scenario, strategy, trial, rootSeed);
     totals[result.status] += 1;
     totals.gold += result.rewards.gold;
     totals.demonExp += result.rewards.demonExp;
@@ -483,8 +453,8 @@ const tableRow = (row) => ({
 });
 
 const runSimulation = (options) =>
-  withSeededRandom(options.seed, () =>
-    buildScenarioRows(options).map(({ scenario, strategy }) => summarizeScenario(scenario, strategy, options.trials)),
+  buildScenarioRows(options).map(({ scenario, strategy }) =>
+    summarizeScenario(scenario, strategy, options.trials, String(options.seed)),
   );
 
 const main = () => {
