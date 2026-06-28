@@ -81,6 +81,7 @@ const STRATEGY_IDS = new Set<StrategyId>(["balanced", "safe", "rush", "loot"]);
 const UNIT_STATUSES = new Set<UnitStatus>(["idle", "expedition", "downed"]);
 const EXPEDITION_STATUSES = new Set<ExpeditionStatus>(["in_progress", "success", "failure", "retreat"]);
 const LOG_TYPES = new Set<LogType>(["info", "battle", "loot", "rescue", "success", "failure", "retreat"]);
+const COMPLETION_LOG_TYPES = new Set<LogType>(["success", "failure", "retreat", "loot", "rescue"]);
 const COMBAT_LOG_TYPES = new Set<CombatLogType>([
   "encounter",
   "allyAttack",
@@ -380,7 +381,12 @@ const isValidSnapshot = (
   snapshot: unknown,
   active: ExpeditionSimulationMetadata,
 ): snapshot is ExpeditionDepartureSnapshotV1 => {
-  if (!isRecord(snapshot) || !nonNegativeNumber(snapshot.demonLordLevel) || !Array.isArray(snapshot.party)) {
+  if (
+    !isRecord(snapshot) ||
+    !Number.isInteger(snapshot.demonLordLevel) ||
+    (snapshot.demonLordLevel as number) < 1 ||
+    !Array.isArray(snapshot.party)
+  ) {
     return false;
   }
   if (snapshot.party.length !== active.unitIds.length) {
@@ -392,9 +398,12 @@ const isValidSnapshot = (
     nonEmptyString(entry.templateId) &&
     UNIT_TEMPLATE_IDS.has(entry.templateId) &&
     typeof entry.name === "string" &&
-    nonNegativeNumber(entry.level) &&
-    nonNegativeNumber(entry.maxHp) &&
+    Number.isInteger(entry.level) &&
+    (entry.level as number) >= 1 &&
+    finiteNumber(entry.maxHp) &&
+    entry.maxHp >= 1 &&
     nonNegativeNumber(entry.currentHp) &&
+    entry.currentHp <= entry.maxHp &&
     nonNegativeNumber(entry.atk) &&
     nonNegativeNumber(entry.def) &&
     nonNegativeNumber(entry.spd),
@@ -403,11 +412,15 @@ const isValidSnapshot = (
     return false;
   }
   return (
-    nonNegativeNumber(snapshot.mastery.clearCount) &&
-    nonNegativeNumber(snapshot.mastery.level) &&
+    Number.isInteger(snapshot.mastery.clearCount) &&
+    (snapshot.mastery.clearCount as number) >= 0 &&
+    Number.isInteger(snapshot.mastery.level) &&
+    (snapshot.mastery.level as number) >= 0 &&
     nonNegativeNumber(snapshot.mastery.rareDropBonus) &&
-    nonNegativeNumber(snapshot.mastery.goldMultiplier) &&
-    nonNegativeNumber(snapshot.mastery.unitExpMultiplier)
+    finiteNumber(snapshot.mastery.goldMultiplier) &&
+    snapshot.mastery.goldMultiplier > 0 &&
+    finiteNumber(snapshot.mastery.unitExpMultiplier) &&
+    snapshot.mastery.unitExpMultiplier > 0
   );
 };
 
@@ -450,9 +463,60 @@ const isValidRewards = (rewards: unknown) => {
   );
 };
 
-const isValidStoredUnit = (unit: unknown): unit is GameUnit =>
+const isValidBattleLog = (battleLog: unknown) => {
+  if (!Array.isArray(battleLog)) {
+    return false;
+  }
+  const ids = new Set<string>();
+  return battleLog.every((entry) => {
+    if (
+      !isRecord(entry) ||
+      !nonEmptyString(entry.id) ||
+      ids.has(entry.id) ||
+      !Number.isInteger(entry.turn) ||
+      (entry.turn as number) < 0 ||
+      typeof entry.type !== "string" ||
+      !COMBAT_LOG_TYPES.has(entry.type as CombatLogType) ||
+      typeof entry.text !== "string" ||
+      (entry.damage !== undefined && !nonNegativeNumber(entry.damage)) ||
+      (entry.hpBefore !== undefined && !nonNegativeNumber(entry.hpBefore)) ||
+      (entry.hpAfter !== undefined && !nonNegativeNumber(entry.hpAfter)) ||
+      (entry.actorName !== undefined && typeof entry.actorName !== "string") ||
+      (entry.targetName !== undefined && typeof entry.targetName !== "string") ||
+      (entry.enemyId !== undefined && typeof entry.enemyId !== "string")
+    ) {
+      return false;
+    }
+    ids.add(entry.id);
+    return true;
+  });
+};
+
+const isValidEncounteredEnemies = (enemies: unknown, active: ExpeditionSimulationMetadata) =>
+  Array.isArray(enemies) && enemies.every((enemy) =>
+    isRecord(enemy) &&
+    nonEmptyString(enemy.id) &&
+    typeof enemy.name === "string" &&
+    typeof enemy.kind === "string" &&
+    typeof enemy.flavor === "string" &&
+    enemy.dungeonId === active.dungeonId &&
+    finiteNumber(enemy.hp) &&
+    enemy.hp >= 1 &&
+    nonNegativeNumber(enemy.attack) &&
+    nonNegativeNumber(enemy.defense) &&
+    nonNegativeNumber(enemy.speed) &&
+    (enemy.isBoss === undefined || typeof enemy.isBoss === "boolean"),
+  );
+
+const isValidRescuedUnit = (
+  unit: unknown,
+  active: ExpeditionSimulationMetadata,
+  participantIds: Set<string>,
+): unit is GameUnit =>
   isRecord(unit) &&
   nonEmptyString(unit.id) &&
+  unit.id.startsWith(`${active.id}-rescue-`) &&
+  !participantIds.has(unit.id) &&
   nonEmptyString(unit.templateId) &&
   UNIT_TEMPLATE_IDS.has(unit.templateId) &&
   typeof unit.name === "string" &&
@@ -460,48 +524,62 @@ const isValidStoredUnit = (unit: unknown): unit is GameUnit =>
   typeof unit.emoji === "string" &&
   typeof unit.rarity === "string" &&
   RARITIES.has(unit.rarity as Rarity) &&
-  nonNegativeNumber(unit.level) &&
+  Number.isInteger(unit.level) &&
+  (unit.level as number) >= 1 &&
   nonNegativeNumber(unit.exp) &&
-  nonNegativeNumber(unit.expToNext) &&
-  nonNegativeNumber(unit.maxHp) &&
-  nonNegativeNumber(unit.currentHp) &&
+  finiteNumber(unit.expToNext) &&
+  unit.expToNext >= 1 &&
+  finiteNumber(unit.maxHp) &&
+  unit.maxHp >= 1 &&
+  finiteNumber(unit.currentHp) &&
+  unit.currentHp >= 1 &&
+  unit.currentHp <= unit.maxHp &&
   nonNegativeNumber(unit.atk) &&
   nonNegativeNumber(unit.def) &&
   nonNegativeNumber(unit.spd) &&
-  typeof unit.status === "string" &&
-  UNIT_STATUSES.has(unit.status as UnitStatus) &&
-  (unit.recoveryUntil === undefined || finiteNumber(unit.recoveryUntil));
+  unit.status === "idle" &&
+  unit.recoveryUntil === undefined;
 
 const isValidRawOutcome = (
   outcome: unknown,
   active: ExpeditionSimulationMetadata,
+  snapshot: ExpeditionDepartureSnapshotV1,
 ): outcome is ExpeditionRawOutcomeV1 => {
   if (!isRecord(outcome) || !isRecord(outcome.record) || !Array.isArray(outcome.party) || !Array.isArray(outcome.rescuedUnits)) {
     return false;
   }
   const record = outcome.record;
+  const rescuedUnits = outcome.rescuedUnits;
   if (
     record.id !== active.id ||
     record.dungeonId !== active.dungeonId ||
+    !nonEmptyString(record.dungeonName) ||
     record.startedAt !== active.startedAt ||
     record.endedAt !== active.endsAt ||
     typeof record.status !== "string" ||
     !["success", "failure", "retreat"].includes(record.status) ||
     !Array.isArray(record.unitNames) ||
     !record.unitNames.every((name) => typeof name === "string") ||
+    record.unitNames.length !== active.unitIds.length ||
+    !record.unitNames.every((name, index) => name === snapshot.party[index]?.name) ||
     record.strategy !== active.strategy ||
     !Array.isArray(record.logs) ||
+    record.logs.length === 0 ||
     !isValidRewards(record.rewards)
   ) {
     return false;
   }
   const logIds = new Set<string>();
+  let previousLogAt = Number.NEGATIVE_INFINITY;
   const logsValid = record.logs.every((log) => {
     if (
       !isRecord(log) ||
       !nonEmptyString(log.id) ||
       logIds.has(log.id) ||
       !finiteNumber(log.at) ||
+      log.at < active.startedAt ||
+      log.at > active.endsAt ||
+      log.at < previousLogAt ||
       typeof log.type !== "string" ||
       !LOG_TYPES.has(log.type as LogType) ||
       typeof log.message !== "string"
@@ -509,39 +587,85 @@ const isValidRawOutcome = (
       return false;
     }
     logIds.add(log.id);
+    previousLogAt = log.at;
     return true;
   });
+  const firstCompletionIndex = record.logs.findIndex(
+    (log) => isRecord(log) && typeof log.type === "string" && COMPLETION_LOG_TYPES.has(log.type as LogType),
+  );
+  const expectedProgressLogCount = firstCompletionIndex < 0 ? record.logs.length : firstCompletionIndex;
   if (
     !logsValid ||
+    !isRecord(record.logs[0]) ||
+    record.logs[0].at !== active.startedAt ||
     !Number.isInteger(outcome.progressLogCount) ||
-    (outcome.progressLogCount as number) < 0 ||
-    (outcome.progressLogCount as number) > record.logs.length ||
+    outcome.progressLogCount !== expectedProgressLogCount ||
+    record.logs.some((log, index) =>
+      !isRecord(log) ||
+      !finiteNumber(log.at) ||
+      (index < expectedProgressLogCount ? log.at >= active.endsAt : log.at !== active.endsAt),
+    ) ||
     outcome.party.length !== active.unitIds.length
   ) {
     return false;
   }
-  const partyValid = outcome.party.every((entry, index) =>
-    isRecord(entry) &&
-    entry.unitId === active.unitIds[index] &&
-    nonNegativeNumber(entry.battleEndHp) &&
-    (entry.battleEndHp > 0 || finiteNumber(entry.recoveryUntil)) &&
-    (entry.recoveryUntil === undefined || finiteNumber(entry.recoveryUntil)),
-  );
-  if (!partyValid || !outcome.rescuedUnits.every(isValidStoredUnit)) {
+  const partyIds = new Set<string>();
+  const partyValid = outcome.party.every((entry, index) => {
+    if (
+      !isRecord(entry) ||
+      entry.unitId !== active.unitIds[index] ||
+      !nonEmptyString(entry.unitId) ||
+      partyIds.has(entry.unitId) ||
+      !nonNegativeNumber(entry.battleEndHp) ||
+      entry.battleEndHp > snapshot.party[index].maxHp ||
+      (entry.battleEndHp === 0
+        ? !finiteNumber(entry.recoveryUntil) || entry.recoveryUntil < active.endsAt
+        : entry.recoveryUntil !== undefined)
+    ) {
+      return false;
+    }
+    partyIds.add(entry.unitId);
+    return true;
+  });
+  const participantIds = new Set(active.unitIds);
+  if (!partyValid || !rescuedUnits.every((unit) => isValidRescuedUnit(unit, active, participantIds))) {
     return false;
   }
-  const rescuedIds = outcome.rescuedUnits.map((unit) => unit.id);
+  const rescuedIds = rescuedUnits.map((unit) => unit.id);
   if (new Set(rescuedIds).size !== rescuedIds.length) {
     return false;
   }
-  const summaryIds = (record.rewards as UnknownRecord).rescuedUnits as unknown[];
-  if (summaryIds.length !== rescuedIds.length || !summaryIds.every((entry, index) => isRecord(entry) && entry.unitId === rescuedIds[index])) {
+  const summaries = (record.rewards as UnknownRecord).rescuedUnits as unknown[];
+  if (
+    summaries.length !== rescuedIds.length ||
+    !summaries.every((entry, index) => {
+      const rescued = rescuedUnits[index];
+      return isRecord(entry) &&
+        entry.unitId === rescued.id &&
+        entry.name === rescued.name &&
+        entry.species === rescued.species &&
+        entry.rarity === rescued.rarity;
+    })
+  ) {
     return false;
   }
-  if (record.battleLog !== undefined && !Array.isArray(record.battleLog)) {
+  const rewards = record.rewards as UnknownRecord;
+  if (isRecord(rewards.mvp)) {
+    const unitIndex = active.unitIds.indexOf(String(rewards.mvp.unitId));
+    if (
+      unitIndex < 0 ||
+      typeof rewards.mvp.name !== "string" ||
+      rewards.mvp.name !== snapshot.party[unitIndex].name ||
+      typeof rewards.mvp.title !== "string" ||
+      typeof rewards.mvp.note !== "string"
+    ) {
+      return false;
+    }
+  }
+  if (!isValidBattleLog(record.battleLog)) {
     return false;
   }
-  if (record.encounteredEnemies !== undefined && !Array.isArray(record.encounteredEnemies)) {
+  if (!isValidEncounteredEnemies(record.encounteredEnemies, active)) {
     return false;
   }
   return true;
@@ -559,7 +683,7 @@ const normalizeV6ActiveExpedition = (active: unknown, units: GameUnit[]): Expedi
     active.simulationVersion !== 1 ||
     !nonEmptyString(active.seed) ||
     !isValidSnapshot(active.snapshot, legacy.metadata) ||
-    !isValidRawOutcome(active.outcome, legacy.metadata)
+    !isValidRawOutcome(active.outcome, legacy.metadata, active.snapshot)
   ) {
     return undefined;
   }
