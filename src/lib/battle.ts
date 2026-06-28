@@ -16,11 +16,12 @@ import type {
 } from "../types/game";
 import { getDungeonMasteryInfo } from "./mastery";
 import { createCombatReport } from "./combatLog";
-import { createUnit, makeId } from "./progression";
+import { createUnit } from "./progression";
 import { getRareDropMasteryBonus, isRareDropItem } from "./rareDrops";
+import { createEphemeralSeed, createSeededRng, pick, randomInt, randomRange, type Rng } from "./rng";
 import { getPartyTraitModifiers } from "./traits";
 
-interface BattleSimulationResult {
+export interface BattleSimulationResult {
   record: ExpeditionRecord;
   partyUpdates: GameUnit[];
   rescuedUnits: GameUnit[];
@@ -28,12 +29,6 @@ interface BattleSimulationResult {
 }
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
-
-const randomRange = (min: number, max: number) => min + Math.random() * (max - min);
-
-const randomInt = (min: number, max: number) => Math.floor(randomRange(min, max + 1));
-
-const pick = <T,>(items: T[]) => items[randomInt(0, items.length - 1)];
 
 const unitPower = (unit: GameUnit) =>
   unit.currentHp * 0.26 + unit.atk * 1.7 + unit.def * 1.25 + unit.spd * 1.08 + unit.level * 5;
@@ -44,7 +39,7 @@ const enemyPower = (enemy: DungeonEnemy, difficulty: number) =>
 const makeLog = (active: ExpeditionState, index: number, type: LogEntry["type"], message: string) => {
   const step = active.durationSeconds * 1000 * (index / 12);
   return {
-    id: makeId("log"),
+    id: `${active.id}-log-${index}`,
     at: active.startedAt + Math.floor(step),
     type,
     message,
@@ -359,7 +354,12 @@ const hasRareReward = (items: RewardItemStack[], rescuedUnits: GameUnit[]) =>
     return rarity === "rare" || rarity === "epic" || rarity === "legendary";
   }) || rescuedUnits.some((unit) => unit.rarity === "rare" || unit.rarity === "epic" || unit.rarity === "legendary");
 
-const chooseMvp = (party: GameUnit[], strategyId: ExpeditionState["strategy"]): ExpeditionMvp | undefined => {
+const chooseMvp = (
+  party: GameUnit[],
+  strategyId: ExpeditionState["strategy"],
+  gameplayRng: Rng,
+  presentationRng: Rng,
+): ExpeditionMvp | undefined => {
   if (party.length === 0) {
     return undefined;
   }
@@ -367,9 +367,9 @@ const chooseMvp = (party: GameUnit[], strategyId: ExpeditionState["strategy"]): 
   const alive = party.filter((unit) => unit.currentHp > 0);
   const candidates = alive.length > 0 ? alive : party;
   const sorted = [...candidates].sort((a, b) => unitPower(b) - unitPower(a));
-  const unit = Math.random() < 0.72 ? sorted[0] : pick(sorted);
-  const title = pick(mvpTitles[strategyId]);
-  const note = pick(mvpNotes).replace(/\{name\}/g, unit.name);
+  const unit = gameplayRng() < 0.72 ? sorted[0] : pick(gameplayRng, sorted);
+  const title = pick(presentationRng, mvpTitles[strategyId]);
+  const note = pick(presentationRng, mvpNotes).replace(/\{name\}/g, unit.name);
 
   return {
     unitId: unit.id,
@@ -380,14 +380,14 @@ const chooseMvp = (party: GameUnit[], strategyId: ExpeditionState["strategy"]): 
 };
 
 
-const applyDamage = (party: GameUnit[], amount: number) => {
+const applyDamage = (party: GameUnit[], amount: number, gameplayRng: Rng) => {
   let remaining = Math.max(1, Math.round(amount));
   const next = party.map((unit) => ({ ...unit }));
 
   while (remaining > 0 && next.some((unit) => unit.currentHp > 0)) {
     const alive = next.filter((unit) => unit.currentHp > 0);
-    const target = alive[randomInt(0, alive.length - 1)];
-    const packet = Math.min(remaining, Math.max(1, Math.round(randomRange(4, 13))));
+    const target = alive[randomInt(gameplayRng, 0, alive.length - 1)];
+    const packet = Math.min(remaining, Math.max(1, Math.round(randomRange(gameplayRng, 4, 13))));
     target.currentHp = Math.max(0, target.currentHp - packet);
     remaining -= packet;
   }
@@ -396,6 +396,7 @@ const applyDamage = (party: GameUnit[], amount: number) => {
 };
 
 const collectRewardItems = (
+  gameplayRng: Rng,
   rewards: DungeonRewardItem[],
   rewardMultiplier: number,
   lootBonus: number,
@@ -406,8 +407,8 @@ const collectRewardItems = (
   rewards.forEach((reward) => {
     const rareDrop = isRareDropItem(reward.itemId);
     const chance = clamp(reward.chance + lootBonus + (rareDrop ? rareDropBonus : materialLootBonus), 0.05, 0.92);
-    if (Math.random() <= chance) {
-      const baseQuantity = randomInt(reward.min, reward.max);
+    if (gameplayRng() <= chance) {
+      const baseQuantity = randomInt(gameplayRng, reward.min, reward.max);
       const quantity = Math.max(1, Math.round(baseQuantity * rewardMultiplier));
       found.push({ itemId: reward.itemId, quantity });
     }
@@ -415,10 +416,13 @@ const collectRewardItems = (
   return found;
 };
 
-export const simulateExpedition = (
+export const simulateExpeditionV1 = (
   state: GameState,
   active: ExpeditionState,
+  seed: string,
 ): BattleSimulationResult => {
+  const gameplayRng = createSeededRng(seed, "gameplay");
+  const presentationRng = createSeededRng(seed, "presentation");
   const dungeon = getDungeon(active.dungeonId);
   const flavor = dungeonFlavor[dungeon.id] ?? dungeonFlavor["ash-border-village"];
   const masteryInfo = getDungeonMasteryInfo(state, active.dungeonId);
@@ -432,8 +436,8 @@ export const simulateExpedition = (
     .map((unit) => ({ ...unit, status: "idle" as const }));
 
   const logs: LogEntry[] = [
-    makeLog(active, 0, "info", `${dungeon.name}へ遠征部隊が出発。${pick(flavor.intro)}`),
-    makeLog(active, 1, "info", pick(strategyLogs[active.strategy])),
+    makeLog(active, 0, "info", `${dungeon.name}へ遠征部隊が出発。${pick(presentationRng, flavor.intro)}`),
+    makeLog(active, 1, "info", pick(presentationRng, strategyLogs[active.strategy])),
   ];
 
   if (party.length === 0) {
@@ -475,13 +479,16 @@ export const simulateExpedition = (
     const baseTrapChance =
       active.strategy === "safe" ? 0.12 : active.strategy === "rush" ? 0.34 : active.strategy === "loot" ? 0.28 : 0.2;
     const trapChance = clamp(baseTrapChance - traitModifiers.trapAvoidance, 0.04, 0.5);
-    if (Math.random() < trapChance && workingParty.some((unit) => unit.currentHp > 0)) {
-      const trapDamage = Math.max(1, (dungeon.difficulty * randomRange(2.2, 5.5) + floor) * damageMultiplier);
-      workingParty = applyDamage(workingParty, trapDamage);
-      logs.push(makeLog(active, logIndex, "info", `${floor}階: ${pick(flavor.traps)}`));
+    if (gameplayRng() < trapChance && workingParty.some((unit) => unit.currentHp > 0)) {
+      const trapDamage = Math.max(
+        1,
+        (dungeon.difficulty * randomRange(gameplayRng, 2.2, 5.5) + floor) * damageMultiplier,
+      );
+      workingParty = applyDamage(workingParty, trapDamage, gameplayRng);
+      logs.push(makeLog(active, logIndex, "info", `${floor}階: ${pick(presentationRng, flavor.traps)}`));
       logIndex += 1;
-    } else if (Math.random() < 0.38) {
-      logs.push(makeLog(active, logIndex, "info", `${floor}階: ${pick(flavor.route)}`));
+    } else if (gameplayRng() < 0.38) {
+      logs.push(makeLog(active, logIndex, "info", `${floor}階: ${pick(presentationRng, flavor.route)}`));
       logIndex += 1;
     }
 
@@ -491,20 +498,20 @@ export const simulateExpedition = (
     const enemyScore = enemyPower(enemy, dungeon.difficulty);
     const levelGap = state.demonLordLevel - dungeon.recommendedLevel;
     const chance = clamp(0.58 + (alivePower - enemyScore) / (enemyScore * 2.6) + levelGap * 0.04 + successBonus, 0.12, 0.96);
-    const roll = Math.random();
+    const roll = gameplayRng();
 
-    logs.push(makeLog(active, logIndex, "battle", `${floor}階: ${enemy.logLine} ${pick(flavor.route)}`));
+    logs.push(makeLog(active, logIndex, "battle", `${floor}階: ${enemy.logLine} ${pick(presentationRng, flavor.route)}`));
     logIndex += 1;
 
     if (roll <= chance) {
       const damage = Math.max(
         1,
-        (enemy.atk * randomRange(0.55, 1.15) + dungeon.difficulty * 3 - workingParty.reduce((sum, unit) => sum + unit.def, 0) / workingParty.length * 0.22) *
+        (enemy.atk * randomRange(gameplayRng, 0.55, 1.15) + dungeon.difficulty * 3 - workingParty.reduce((sum, unit) => sum + unit.def, 0) / workingParty.length * 0.22) *
           damageMultiplier,
       );
-      workingParty = applyDamage(workingParty, damage);
+      workingParty = applyDamage(workingParty, damage, gameplayRng);
       const aliveForDeed = workingParty.filter((unit) => unit.currentHp > 0);
-      const actor = pick(aliveForDeed.length > 0 ? aliveForDeed : workingParty);
+      const actor = pick(presentationRng, aliveForDeed.length > 0 ? aliveForDeed : workingParty);
       logs.push(
         makeLog(
           active,
@@ -515,8 +522,11 @@ export const simulateExpedition = (
       );
       logIndex += 1;
     } else {
-      const damage = Math.max(5, enemy.atk * randomRange(1.55, 2.25) * damageMultiplier * traitModifiers.failureDamageMultiplier);
-      workingParty = applyDamage(workingParty, damage);
+      const damage = Math.max(
+        5,
+        enemy.atk * randomRange(gameplayRng, 1.55, 2.25) * damageMultiplier * traitModifiers.failureDamageMultiplier,
+      );
+      workingParty = applyDamage(workingParty, damage, gameplayRng);
       const allDown = workingParty.every((unit) => unit.currentHp <= 0);
       status = allDown || roll > chance + 0.18 ? "failure" : "retreat";
       logs.push(
@@ -527,8 +537,8 @@ export const simulateExpedition = (
             ? "failure"
             : "retreat",
           status === "failure"
-            ? `${enemy.name}の反撃で隊列が崩壊。${pick(flavor.failure)}`
-            : `${enemy.name}の抵抗が激しい。${pick(flavor.retreat)}`,
+            ? `${enemy.name}の反撃で隊列が崩壊。${pick(presentationRng, flavor.failure)}`
+            : `${enemy.name}の抵抗が激しい。${pick(presentationRng, flavor.retreat)}`,
         ),
       );
       logIndex += 1;
@@ -546,18 +556,23 @@ export const simulateExpedition = (
       0.1,
       0.95,
     );
-    const roll = Math.random();
-    logs.push(makeLog(active, logIndex, "battle", `最深部: ${pick(flavor.boss)} ${dungeon.boss.logLine}`));
+    const roll = gameplayRng();
+    logs.push(makeLog(active, logIndex, "battle", `最深部: ${pick(presentationRng, flavor.boss)} ${dungeon.boss.logLine}`));
     logIndex += 1;
 
     if (roll <= chance) {
-      const damage = Math.max(3, dungeon.boss.atk * randomRange(0.9, 1.45) * damageMultiplier);
-      workingParty = applyDamage(workingParty, damage);
-      logs.push(makeLog(active, logIndex, "success", `${dungeon.boss.name}を退けた。${pick(flavor.victory)}`));
+      const damage = Math.max(3, dungeon.boss.atk * randomRange(gameplayRng, 0.9, 1.45) * damageMultiplier);
+      workingParty = applyDamage(workingParty, damage, gameplayRng);
+      logs.push(
+        makeLog(active, logIndex, "success", `${dungeon.boss.name}を退けた。${pick(presentationRng, flavor.victory)}`),
+      );
       logIndex += 1;
     } else {
-      const damage = Math.max(8, dungeon.boss.atk * randomRange(1.85, 2.65) * damageMultiplier * traitModifiers.failureDamageMultiplier);
-      workingParty = applyDamage(workingParty, damage);
+      const damage = Math.max(
+        8,
+        dungeon.boss.atk * randomRange(gameplayRng, 1.85, 2.65) * damageMultiplier * traitModifiers.failureDamageMultiplier,
+      );
+      workingParty = applyDamage(workingParty, damage, gameplayRng);
       const allDown = workingParty.every((unit) => unit.currentHp <= 0);
       status = allDown || roll > chance + 0.12 ? "failure" : "retreat";
       logs.push(
@@ -568,8 +583,8 @@ export const simulateExpedition = (
             ? "failure"
             : "retreat",
           status === "failure"
-            ? `${dungeon.boss.name}に敗北。${pick(flavor.failure)}`
-            : `${dungeon.boss.name}を前に、部隊は勝機なしと判断した。${pick(flavor.retreat)}`,
+            ? `${dungeon.boss.name}に敗北。${pick(presentationRng, flavor.failure)}`
+            : `${dungeon.boss.name}を前に、部隊は勝機なしと判断した。${pick(presentationRng, flavor.retreat)}`,
         ),
       );
       logIndex += 1;
@@ -577,17 +592,33 @@ export const simulateExpedition = (
   }
 
   const rewardScale = status === "success" ? 1 : status === "retreat" ? 0.45 : 0.3;
-  const gold = Math.round(randomRange(dungeon.goldMin, dungeon.goldMax) * goldMultiplier * rewardScale);
+  const gold = Math.round(randomRange(gameplayRng, dungeon.goldMin, dungeon.goldMax) * goldMultiplier * rewardScale);
   const demonExp = Math.round(dungeon.demonExp * (status === "success" ? 1 : status === "retreat" ? 0.45 : 0.3));
   const unitExp = Math.round(dungeon.unitExp * strategy.unitExpMultiplier * (status === "success" ? 1 : status === "retreat" ? 0.55 : 0.4));
   const territory = status === "success" ? dungeon.territoryReward : 0;
   const items =
     status === "success"
-      ? collectRewardItems(dungeon.rewards, rewardMultiplier, lootBonus, rareDropMasteryBonus, traitModifiers.materialLootBonus)
-      : collectRewardItems(dungeon.rewards, 0.5, lootBonus - 0.2, 0, traitModifiers.materialLootBonus).slice(0, 1);
+      ? collectRewardItems(
+          gameplayRng,
+          dungeon.rewards,
+          rewardMultiplier,
+          lootBonus,
+          rareDropMasteryBonus,
+          traitModifiers.materialLootBonus,
+        )
+      : collectRewardItems(
+          gameplayRng,
+          dungeon.rewards,
+          0.5,
+          lootBonus - 0.2,
+          0,
+          traitModifiers.materialLootBonus,
+        ).slice(0, 1);
 
   if (items.length > 0) {
-    logs.push(makeLog(active, logIndex, "loot", `${pick(flavor.treasure)} 獲得: ${itemNames(items)}。`));
+    logs.push(
+      makeLog(active, logIndex, "loot", `${pick(presentationRng, flavor.treasure)} 獲得: ${itemNames(items)}。`),
+    );
     logIndex += 1;
   }
 
@@ -599,10 +630,11 @@ export const simulateExpedition = (
       0.78,
     );
     const hasRoom = state.units.length < state.unitCapacity;
-    if (hasRoom && Math.random() <= rescueChance) {
-      const templateId = dungeon.rescuePool[randomInt(0, dungeon.rescuePool.length - 1)];
+    if (hasRoom && gameplayRng() <= rescueChance) {
+      const templateId = dungeon.rescuePool[randomInt(gameplayRng, 0, dungeon.rescuePool.length - 1)];
       const template = getUnitTemplate(templateId);
       const rescued = createUnit(templateId, {
+        id: `${active.id}-rescue-${rescuedUnits.length + 1}-${templateId}`,
         level: Math.max(1, dungeon.recommendedLevel - 1),
       });
       rescuedUnits.push(rescued);
@@ -640,14 +672,14 @@ export const simulateExpedition = (
     };
   });
 
-  const mvp = chooseMvp(partyUpdates, active.strategy);
+  const mvp = chooseMvp(partyUpdates, active.strategy, gameplayRng, presentationRng);
   if (mvp) {
     logs.push(makeLog(active, logIndex, status === "success" ? "success" : "info", `MVP: ${mvp.name}「${mvp.title}」。${mvp.note}`));
     logIndex += 1;
   }
 
   if (hasRareReward([], rescuedUnits)) {
-    logs.push(makeLog(active, logIndex, "loot", pick(rareRewardLines)));
+    logs.push(makeLog(active, logIndex, "loot", pick(presentationRng, rareRewardLines)));
     logIndex += 1;
   }
 
@@ -672,6 +704,7 @@ export const simulateExpedition = (
     finalParty: partyUpdates,
     status,
     rewards,
+    rng: presentationRng,
   });
 
   const record: ExpeditionRecord = {
@@ -691,3 +724,13 @@ export const simulateExpedition = (
 
   return { record, partyUpdates, rescuedUnits, rewards };
 };
+
+export const simulateExpedition = (
+  state: GameState,
+  active: ExpeditionState,
+): BattleSimulationResult =>
+  simulateExpeditionV1(
+    state,
+    active,
+    createEphemeralSeed(active.id, active.dungeonId, active.startedAt, active.endsAt),
+  );
