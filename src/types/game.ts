@@ -184,7 +184,7 @@ export interface StrategyDefinition {
   unitExpMultiplier: number;
 }
 
-export interface ExpeditionState {
+export interface ExpeditionSimulationMetadata {
   id: string;
   dungeonId: string;
   unitIds: string[];
@@ -193,6 +193,52 @@ export interface ExpeditionState {
   startedAt: number;
   endsAt: number;
   durationSeconds: number;
+}
+
+export interface ExpeditionUnitSnapshotV1 {
+  id: string;
+  templateId: string;
+  name: string;
+  level: number;
+  maxHp: number;
+  currentHp: number;
+  atk: number;
+  def: number;
+  spd: number;
+}
+
+export interface ExpeditionMasterySnapshotV1 {
+  clearCount: number;
+  level: number;
+  rareDropBonus: number;
+  goldMultiplier: number;
+  unitExpMultiplier: number;
+}
+
+export interface ExpeditionDepartureSnapshotV1 {
+  demonLordLevel: number;
+  party: ExpeditionUnitSnapshotV1[];
+  mastery: ExpeditionMasterySnapshotV1;
+}
+
+export interface ExpeditionPartyOutcomeV1 {
+  unitId: string;
+  battleEndHp: number;
+  recoveryUntil?: number;
+}
+
+export interface ExpeditionRawOutcomeV1 {
+  record: ExpeditionRecord & { rewards: ExpeditionRewards };
+  party: ExpeditionPartyOutcomeV1[];
+  rescuedUnits: GameUnit[];
+  progressLogCount: number;
+}
+
+export interface ExpeditionState extends ExpeditionSimulationMetadata {
+  simulationVersion: 1;
+  seed: string;
+  snapshot: ExpeditionDepartureSnapshotV1;
+  outcome: ExpeditionRawOutcomeV1;
 }
 
 export interface LogEntry {

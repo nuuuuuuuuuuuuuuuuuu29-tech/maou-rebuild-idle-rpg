@@ -8,7 +8,7 @@ const FIXED_TIME = Date.UTC(2026, 4, 13, 12, 0, 0);
 export const createGameState = (overrides: Partial<GameState> = {}): GameState => ({
   ...createInitialState(),
   ...overrides,
-  version: 5,
+  version: 6,
   updatedAt: FIXED_TIME,
 });
 

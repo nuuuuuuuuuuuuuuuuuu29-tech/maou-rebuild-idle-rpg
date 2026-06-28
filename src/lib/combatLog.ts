@@ -6,13 +6,13 @@ import type {
   EnemyCharacterDefinition,
   ExpeditionRecord,
   ExpeditionRewards,
-  ExpeditionState,
+  ExpeditionSimulationMetadata,
   GameUnit,
 } from "../types/game";
 import { randomRange, type Rng } from "./rng";
 
 interface CombatReportInput {
-  active: ExpeditionState;
+  active: ExpeditionSimulationMetadata;
   dungeon: DungeonDefinition;
   initialParty: GameUnit[];
   finalParty: GameUnit[];
@@ -56,7 +56,7 @@ const weightedPick = (enemies: EnemyCharacterDefinition[], rng: Rng) => {
 };
 
 const makeEntry = (
-  active: ExpeditionState,
+  active: ExpeditionSimulationMetadata,
   index: number,
   entry: Omit<CombatLogEntry, "id">,
 ): CombatLogEntry => ({
@@ -144,7 +144,7 @@ const enemyDamage = (enemy: RuntimeEnemy, unit: RuntimeUnit, rng: Rng) => {
 
 const pushHpDamageEntry = (
   logs: CombatLogEntry[],
-  active: ExpeditionState,
+  active: ExpeditionSimulationMetadata,
   turn: number,
   indexRef: { value: number },
   actorName: string,

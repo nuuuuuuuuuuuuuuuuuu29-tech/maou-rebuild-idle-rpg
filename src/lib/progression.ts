@@ -175,7 +175,7 @@ export const createInitialState = (): GameState => {
   const firstUnit = createUnit("cinder-goblin", { name: "ハイツメ", id: "unit-first-cinder" });
 
   return {
-    version: 5,
+    version: 6,
     demonLordName: "煤冠の魔王",
     demonLordLevel: 1,
     demonLordExp: 0,
