@@ -1,9 +1,12 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { execFileSync } = require("node:child_process");
+const fs = require("node:fs");
 const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
+const { SAVE_VERSION } = require(path.join(root, ".tmp-tests", "src", "lib", "storage.js"));
+const baselinePath = path.join(root, "tests", "fixtures", "balance-baseline-seed-12345-trials-10000.json");
 
 const runSimulationJson = (args = []) =>
   execFileSync(process.execPath, ["scripts/simulate-balance.cjs", "--json", ...args], {
@@ -25,7 +28,7 @@ test("balance simulation script runs a lightweight JSON scenario", () => {
   const payload = JSON.parse(output);
 
   assert.equal(payload.tool, "maou-rebuild-balance-simulation");
-  assert.equal(payload.gameStateVersion, 5);
+  assert.equal(payload.gameStateVersion, SAVE_VERSION);
   assert.equal(payload.trialsPerRow, 3);
   assert.equal(payload.rowCount, 1);
 
@@ -72,4 +75,19 @@ test("balance simulation is reproducible with the same seed", () => {
   ];
 
   assert.equal(runSimulationJson(args), runSimulationJson(args));
+});
+
+test("committed balance baseline metadata matches the current save schema", () => {
+  const payload = JSON.parse(fs.readFileSync(baselinePath, "utf8"));
+
+  assert.equal(payload.tool, "maou-rebuild-balance-simulation");
+  assert.equal(payload.gameStateVersion, SAVE_VERSION);
+  assert.equal(payload.seed, "12345");
+  assert.equal(payload.trialsPerRow, 10000);
+  assert.equal(payload.rowCount, 36);
+  assert.equal(payload.rows.length, 36);
+  payload.rows.forEach((row) => {
+    assert.ok(row && typeof row === "object" && !Array.isArray(row));
+    assert.equal(row.trials, 10000);
+  });
 });
