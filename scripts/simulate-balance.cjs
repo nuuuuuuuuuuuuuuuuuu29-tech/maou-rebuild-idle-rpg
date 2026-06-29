@@ -104,7 +104,12 @@ const loadCompiled = (relativePath) => {
 const { DUNGEONS } = loadCompiled("data/dungeons.js");
 const { STRATEGIES } = loadCompiled("data/strategies.js");
 const { createInitialState, createUnit, getDemonExpToNext, getMaxPartySize } = loadCompiled("lib/progression.js");
-const { advanceGameWithSimulationSeed, getAdjustedDuration } = loadCompiled("lib/expedition.js");
+const {
+  advanceGame,
+  createExpeditionDepartureSnapshotV1,
+  createExpeditionRawOutcomeV1,
+  getAdjustedDuration,
+} = loadCompiled("lib/expedition.js");
 const { getDungeonMasteryLevel } = loadCompiled("lib/mastery.js");
 const { isRareDropItem } = loadCompiled("lib/rareDrops.js");
 const { getPartyTraitModifiers } = loadCompiled("lib/traits.js");
@@ -301,8 +306,17 @@ const countTrapLikeEvents = (record) =>
 
 const runTrial = (scenario, strategy, trial, rootSeed) => {
   const state = makeState(scenario);
-  const activeExpedition = makeActiveExpedition(state, scenario, strategy, trial);
-  const participantIds = new Set(activeExpedition.unitIds);
+  const activeMetadata = makeActiveExpedition(state, scenario, strategy, trial);
+  const participantIds = new Set(activeMetadata.unitIds);
+  const trialSeed = `${rootSeed}|${scenario.id}|${strategy}|${trial}`;
+  const snapshot = createExpeditionDepartureSnapshotV1(state, activeMetadata);
+  const activeExpedition = {
+    ...activeMetadata,
+    simulationVersion: 1,
+    seed: trialSeed,
+    snapshot,
+    outcome: createExpeditionRawOutcomeV1(state, activeMetadata, trialSeed, snapshot),
+  };
   const stateWithActive = {
     ...state,
     activeExpedition,
@@ -313,8 +327,7 @@ const runTrial = (scenario, strategy, trial, rootSeed) => {
     },
   };
 
-  const trialSeed = `${rootSeed}|${scenario.id}|${strategy}|${trial}`;
-  const finished = advanceGameWithSimulationSeed(stateWithActive, activeExpedition.endsAt + 1, trialSeed);
+  const finished = advanceGame(stateWithActive, activeExpedition.endsAt + 1);
   const record = finished.records[0];
   const rewards = record.rewards ?? {
     gold: 0,
@@ -482,7 +495,7 @@ const main = () => {
     rows,
     notes: [
       "This tool uses synthetic in-memory GameState objects and never reads or writes localStorage.",
-      "Rewards and outcomes are calculated through the existing expedition flow, which calls simulateExpedition.",
+      "Rewards and outcomes are created once with an explicit per-trial seed, then applied through advanceGame.",
       "trapEventRate is derived from route/trap info logs because the current battle log does not expose a dedicated trap event type.",
     ],
   };

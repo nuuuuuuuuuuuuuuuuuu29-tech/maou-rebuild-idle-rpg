@@ -160,7 +160,7 @@ test("遠征準備でレアドロップ目標を切り替え、収集状況を�
   expect(browserErrors).toEqual([]);
 });
 
-test("時計制御で遠征を完了し報酬と作戦記録を作成する", async ({ page }) => {
+test("時計制御で進行中遠征をreloadしても固定ログと報酬を一度だけ使用する", async ({ page }) => {
   const browserErrors = collectBrowserErrors(page);
   await page.clock.install({ time: new Date("2026-05-13T12:00:00Z") });
   await openFreshGame(page);
@@ -169,11 +169,45 @@ test("時計制御で遠征を完了し報酬と作戦記録を作成する", as
   await page.getByRole("button", { name: "準備完了：遠征開始" }).click();
   await expect(page.getByRole("heading", { name: "進行中" })).toBeVisible();
 
+  const startedSave = await readSavedGame(page);
+  expect(startedSave?.version).toBe(6);
+  expect(startedSave?.activeExpedition?.simulationVersion).toBe(1);
+  expect(startedSave?.activeExpedition?.seed).toMatch(/^seed-v1-[0-9a-f]{32}$/);
+  expect(startedSave?.activeExpedition?.snapshot.party).toHaveLength(1);
+  expect(startedSave?.activeExpedition?.outcome.record.id).toBe(startedSave?.activeExpedition?.id);
+  const rawOutcome = startedSave?.activeExpedition?.outcome;
+
   await page.reload();
   await page.getByRole("button", { name: "記録", exact: true }).click();
   await expect(page.getByRole("heading", { name: "進行中" })).toBeVisible();
 
-  await page.clock.fastForward(31_000);
+  const activePanel = page.locator("section.panel").filter({
+    has: page.getByRole("heading", { name: "進行中" }),
+  });
+  await page.clock.fastForward(15_000);
+  const beforeReloadLogs = await activePanel.locator(".log-entry p").allTextContents();
+  expect(beforeReloadLogs.length).toBeGreaterThan(0);
+  expect(beforeReloadLogs).toEqual(rawOutcome?.record.logs.slice(0, beforeReloadLogs.length).map((log) => log.message));
+  await expect(activePanel.locator(".log-entry.success, .log-entry.failure, .log-entry.retreat, .log-entry.loot, .log-entry.rescue")).toHaveCount(0);
+
+  await page.reload();
+  await page.getByRole("button", { name: "記録", exact: true }).click();
+  const reloadedPanel = page.locator("section.panel").filter({
+    has: page.getByRole("heading", { name: "進行中" }),
+  });
+  const afterReloadLogs = await reloadedPanel.locator(".log-entry p").allTextContents();
+  expect(afterReloadLogs).toEqual(beforeReloadLogs);
+  const reloadedSave = await readSavedGame(page);
+  expect(reloadedSave?.activeExpedition?.seed).toBe(startedSave?.activeExpedition?.seed);
+  expect(reloadedSave?.activeExpedition?.snapshot).toEqual(startedSave?.activeExpedition?.snapshot);
+  expect(reloadedSave?.activeExpedition?.outcome).toEqual(rawOutcome);
+
+  await page.clock.fastForward(10_000);
+  const laterLogs = await reloadedPanel.locator(".log-entry p").allTextContents();
+  expect(laterLogs.slice(0, beforeReloadLogs.length)).toEqual(beforeReloadLogs);
+  expect(laterLogs.length).toBeGreaterThanOrEqual(beforeReloadLogs.length);
+
+  await page.clock.fastForward(6_000);
   await expect(page.getByText("遠征完了", { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "今回増えたもの" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "敵遭遇と交戦記録" }).first()).toBeVisible();
@@ -182,6 +216,26 @@ test("時計制御で遠征を完了し報酬と作戦記録を作成する", as
   expect(saved?.activeExpedition).toBeUndefined();
   expect(saved?.records).toHaveLength(1);
   expect(saved?.gold).toBeGreaterThan(120);
+  expect(saved?.records[0].logs.slice(0, laterLogs.length).map((log) => log.message)).toEqual(laterLogs);
+
+  const completedSnapshot = {
+    gold: saved?.gold,
+    demonLordLevel: saved?.demonLordLevel,
+    demonLordExp: saved?.demonLordExp,
+    inventory: saved?.inventory,
+    units: saved?.units,
+    record: saved?.records[0],
+  };
+  await page.reload();
+  const completedReload = await readSavedGame(page);
+  expect({
+    gold: completedReload?.gold,
+    demonLordLevel: completedReload?.demonLordLevel,
+    demonLordExp: completedReload?.demonLordExp,
+    inventory: completedReload?.inventory,
+    units: completedReload?.units,
+    record: completedReload?.records[0],
+  }).toEqual(completedSnapshot);
   expect(browserErrors).toEqual([]);
 });
 

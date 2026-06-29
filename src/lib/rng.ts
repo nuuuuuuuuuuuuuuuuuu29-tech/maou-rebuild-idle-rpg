@@ -32,6 +32,59 @@ export const pick = <T,>(rng: Rng, values: readonly T[]): T =>
 
 let fallbackSeedCounter = 0;
 
+export interface ExpeditionSeedContext {
+  expeditionId: string;
+  dungeonId: string;
+  unitIds: string[];
+  strategy: string;
+  itemId?: string;
+  startedAt: number;
+  endsAt: number;
+  durationSeconds: number;
+}
+
+const seedContextText = (context: ExpeditionSeedContext) =>
+  [
+    context.expeditionId,
+    context.dungeonId,
+    context.unitIds.join(","),
+    context.strategy,
+    context.itemId ?? "",
+    context.startedAt,
+    context.endsAt,
+    context.durationSeconds,
+  ].join("|");
+
+export const createExpeditionSeed = (context: ExpeditionSeedContext) => {
+  const values = new Uint32Array(4);
+  if (globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(values);
+  } else {
+    fallbackSeedCounter += 1;
+    const canonical = `${seedContextText(context)}|${fallbackSeedCounter}`;
+    for (let index = 0; index < values.length; index += 1) {
+      values[index] = hashSeed(`${canonical}|${index}`);
+    }
+  }
+
+  return `seed-v1-${[...values].map((value) => value.toString(16).padStart(8, "0")).join("")}`;
+};
+
+export const createLegacyV5ExpeditionSeed = (context: ExpeditionSeedContext) => {
+  const canonical = [
+    "legacy-v5",
+    context.expeditionId,
+    context.dungeonId,
+    context.unitIds.join(","),
+    context.strategy,
+    context.itemId ?? "",
+    context.startedAt,
+    context.endsAt,
+    context.durationSeconds,
+  ].join("|");
+  return `legacy-v5-${hashSeed(canonical).toString(16).padStart(8, "0")}`;
+};
+
 export const createEphemeralSeed = (...context: Array<string | number | undefined>) => {
   const values = new Uint32Array(4);
   if (globalThis.crypto?.getRandomValues) {

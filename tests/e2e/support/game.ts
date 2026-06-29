@@ -32,7 +32,7 @@ export const collectBrowserErrors = (page: Page) => {
   const errors: string[] = [];
 
   page.on("console", (message) => {
-    if (message.type() === "error") {
+    if (message.type() === "error" || (message.type() === "warning" && /react/i.test(message.text()))) {
       errors.push(message.text());
     }
   });

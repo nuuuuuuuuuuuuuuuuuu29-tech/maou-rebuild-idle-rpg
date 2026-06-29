@@ -12,7 +12,11 @@ import type {
   CombatLogEntry,
   CombatLogType,
   DungeonMasteryRecord,
+  ExpeditionDepartureSnapshotV1,
+  ExpeditionRawOutcomeV1,
   ExpeditionRecord,
+  ExpeditionSimulationMetadata,
+  ExpeditionState,
   ExpeditionStatus,
   GameState,
   GameUnit,
@@ -25,11 +29,13 @@ import type {
   UnitStatus,
 } from "../types/game";
 import { deriveBossRecordsFromRecords, evaluateAchievements, mergeBossRecords } from "./achievements";
+import { createExpeditionDepartureSnapshotV1, createExpeditionRawOutcomeV1 } from "./expedition";
 import { deriveDungeonMasteryFromRecords, mergeDungeonMasteryRecords } from "./mastery";
 import { createInitialState, createUnit } from "./progression";
+import { createLegacyV5ExpeditionSeed, hashSeed } from "./rng";
 import { normalizeSelectedTitleId } from "./titles";
 
-export const SAVE_VERSION = 5;
+export const SAVE_VERSION = 6;
 export const STORAGE_KEY = "maou-rebuild-state-v1";
 
 const BACKUP_PREFIX = "maou-rebuild-state-backup";
@@ -75,6 +81,7 @@ const STRATEGY_IDS = new Set<StrategyId>(["balanced", "safe", "rush", "loot"]);
 const UNIT_STATUSES = new Set<UnitStatus>(["idle", "expedition", "downed"]);
 const EXPEDITION_STATUSES = new Set<ExpeditionStatus>(["in_progress", "success", "failure", "retreat"]);
 const LOG_TYPES = new Set<LogType>(["info", "battle", "loot", "rescue", "success", "failure", "retreat"]);
+const COMPLETION_LOG_TYPES = new Set<LogType>(["success", "failure", "retreat", "loot", "rescue"]);
 const COMBAT_LOG_TYPES = new Set<CombatLogType>([
   "encounter",
   "allyAttack",
@@ -205,6 +212,11 @@ const migrateV4ToV5 = (source: UnknownRecord): UnknownRecord => ({
   selectedTitleId: typeof source.selectedTitleId === "string" ? source.selectedTitleId : undefined,
 });
 
+const migrateV5ToV6 = (source: UnknownRecord): UnknownRecord => ({
+  ...source,
+  version: 6,
+});
+
 const migrateSaveData = (source: UnknownRecord) => {
   const fromVersion = typeof source.version === "number" ? source.version : 1;
 
@@ -228,6 +240,9 @@ const migrateSaveData = (source: UnknownRecord) => {
   }
   if (fromVersion < 5) {
     data = migrateV4ToV5(data);
+  }
+  if (fromVersion < 6) {
+    data = migrateV5ToV6(data);
   }
 
   return {
@@ -295,36 +310,389 @@ const normalizeUnits = (units: unknown, fallback: GameUnit[]) => {
   return normalized.length > 0 ? normalized : fallback;
 };
 
-const normalizeActiveExpedition = (active: unknown, units: GameUnit[]) => {
+const nonEmptyString = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0;
+const finiteNumber = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+const nonNegativeNumber = (value: unknown): value is number => finiteNumber(value) && value >= 0;
+
+const normalizeLegacyActiveMetadata = (
+  active: unknown,
+  units: GameUnit[],
+): { metadata?: ExpeditionSimulationMetadata; reason?: string } => {
+  if (active === undefined || active === null) {
+    return {};
+  }
   if (!isRecord(active)) {
-    return undefined;
+    return { reason: "進行中遠征の保存形式が不正だったため解除しました。" };
   }
 
-  const dungeonId = typeof active.dungeonId === "string" && DUNGEON_IDS.has(active.dungeonId) ? active.dungeonId : "";
+  const dungeonId = nonEmptyString(active.dungeonId) && DUNGEON_IDS.has(active.dungeonId) ? active.dungeonId : undefined;
   const availableUnitIds = new Set(units.map((unit) => unit.id));
   const unitIds = uniqueStringArray(active.unitIds).filter((unitId) => availableUnitIds.has(unitId));
-  if (!dungeonId || unitIds.length === 0) {
-    return undefined;
-  }
-
-  const startedAt = numberOr(active.startedAt, Date.now());
-  const durationSeconds = integerAtLeast(active.durationSeconds, 30, 1);
-  const endsAt = Math.max(startedAt, numberOr(active.endsAt, startedAt + durationSeconds * 1000));
   const strategy =
     typeof active.strategy === "string" && STRATEGY_IDS.has(active.strategy as StrategyId)
       ? (active.strategy as StrategyId)
-      : "balanced";
-  const itemId = typeof active.itemId === "string" && SUPPORT_ITEM_IDS.has(active.itemId) ? active.itemId : undefined;
+      : undefined;
+  const itemId =
+    active.itemId === undefined
+      ? undefined
+      : typeof active.itemId === "string" && SUPPORT_ITEM_IDS.has(active.itemId)
+        ? active.itemId
+        : null;
+  if (
+    !dungeonId ||
+    unitIds.length === 0 ||
+    !strategy ||
+    itemId === null ||
+    !finiteNumber(active.startedAt) ||
+    !finiteNumber(active.endsAt) ||
+    !finiteNumber(active.durationSeconds) ||
+    active.durationSeconds <= 0 ||
+    active.endsAt < active.startedAt
+  ) {
+    return { reason: "進行中遠征の必須情報を復元できなかったため解除しました。" };
+  }
 
-  return {
-    id: stringOr(active.id, `expedition-migrated-${startedAt}`),
+  const derivedIdSource = [
     dungeonId,
-    unitIds,
+    unitIds.join(","),
     strategy,
-    itemId,
-    startedAt,
-    endsAt,
-    durationSeconds,
+    itemId ?? "",
+    active.startedAt,
+    active.endsAt,
+    active.durationSeconds,
+  ].join("|");
+  return {
+    metadata: {
+      id: nonEmptyString(active.id)
+        ? active.id
+        : `expedition-legacy-${hashSeed(derivedIdSource).toString(16).padStart(8, "0")}`,
+      dungeonId,
+      unitIds,
+      strategy,
+      ...(itemId ? { itemId } : {}),
+      startedAt: active.startedAt,
+      endsAt: active.endsAt,
+      durationSeconds: Math.floor(active.durationSeconds),
+    },
+  };
+};
+
+const isValidSnapshot = (
+  snapshot: unknown,
+  active: ExpeditionSimulationMetadata,
+): snapshot is ExpeditionDepartureSnapshotV1 => {
+  if (
+    !isRecord(snapshot) ||
+    !Number.isInteger(snapshot.demonLordLevel) ||
+    (snapshot.demonLordLevel as number) < 1 ||
+    !Array.isArray(snapshot.party)
+  ) {
+    return false;
+  }
+  if (snapshot.party.length !== active.unitIds.length) {
+    return false;
+  }
+  const validParty = snapshot.party.every((entry, index) =>
+    isRecord(entry) &&
+    entry.id === active.unitIds[index] &&
+    nonEmptyString(entry.templateId) &&
+    UNIT_TEMPLATE_IDS.has(entry.templateId) &&
+    typeof entry.name === "string" &&
+    Number.isInteger(entry.level) &&
+    (entry.level as number) >= 1 &&
+    finiteNumber(entry.maxHp) &&
+    entry.maxHp >= 1 &&
+    nonNegativeNumber(entry.currentHp) &&
+    entry.currentHp <= entry.maxHp &&
+    nonNegativeNumber(entry.atk) &&
+    nonNegativeNumber(entry.def) &&
+    nonNegativeNumber(entry.spd),
+  );
+  if (!validParty || !isRecord(snapshot.mastery)) {
+    return false;
+  }
+  return (
+    Number.isInteger(snapshot.mastery.clearCount) &&
+    (snapshot.mastery.clearCount as number) >= 0 &&
+    Number.isInteger(snapshot.mastery.level) &&
+    (snapshot.mastery.level as number) >= 0 &&
+    nonNegativeNumber(snapshot.mastery.rareDropBonus) &&
+    finiteNumber(snapshot.mastery.goldMultiplier) &&
+    snapshot.mastery.goldMultiplier > 0 &&
+    finiteNumber(snapshot.mastery.unitExpMultiplier) &&
+    snapshot.mastery.unitExpMultiplier > 0
+  );
+};
+
+const isValidRewardItems = (items: unknown) =>
+  Array.isArray(items) && items.every((entry) =>
+    isRecord(entry) &&
+    typeof entry.itemId === "string" &&
+    ITEM_IDS.has(entry.itemId) &&
+    Number.isInteger(entry.quantity) &&
+    (entry.quantity as number) > 0,
+  );
+
+const isValidRescueSummary = (entry: unknown) =>
+  isRecord(entry) &&
+  nonEmptyString(entry.unitId) &&
+  typeof entry.name === "string" &&
+  typeof entry.species === "string" &&
+  typeof entry.rarity === "string" &&
+  RARITIES.has(entry.rarity as Rarity);
+
+const isValidRewards = (rewards: unknown) => {
+  if (
+    !isRecord(rewards) ||
+    !nonNegativeNumber(rewards.gold) ||
+    !nonNegativeNumber(rewards.demonExp) ||
+    !nonNegativeNumber(rewards.unitExp) ||
+    !nonNegativeNumber(rewards.territory) ||
+    !isValidRewardItems(rewards.items) ||
+    !Array.isArray(rewards.rescuedUnits) ||
+    !rewards.rescuedUnits.every(isValidRescueSummary)
+  ) {
+    return false;
+  }
+  return rewards.mvp === undefined || (
+    isRecord(rewards.mvp) &&
+    nonEmptyString(rewards.mvp.unitId) &&
+    typeof rewards.mvp.name === "string" &&
+    typeof rewards.mvp.title === "string" &&
+    typeof rewards.mvp.note === "string"
+  );
+};
+
+const isValidBattleLog = (battleLog: unknown) => {
+  if (!Array.isArray(battleLog)) {
+    return false;
+  }
+  const ids = new Set<string>();
+  return battleLog.every((entry) => {
+    if (
+      !isRecord(entry) ||
+      !nonEmptyString(entry.id) ||
+      ids.has(entry.id) ||
+      !Number.isInteger(entry.turn) ||
+      (entry.turn as number) < 0 ||
+      typeof entry.type !== "string" ||
+      !COMBAT_LOG_TYPES.has(entry.type as CombatLogType) ||
+      typeof entry.text !== "string" ||
+      (entry.damage !== undefined && !nonNegativeNumber(entry.damage)) ||
+      (entry.hpBefore !== undefined && !nonNegativeNumber(entry.hpBefore)) ||
+      (entry.hpAfter !== undefined && !nonNegativeNumber(entry.hpAfter)) ||
+      (entry.actorName !== undefined && typeof entry.actorName !== "string") ||
+      (entry.targetName !== undefined && typeof entry.targetName !== "string") ||
+      (entry.enemyId !== undefined && typeof entry.enemyId !== "string")
+    ) {
+      return false;
+    }
+    ids.add(entry.id);
+    return true;
+  });
+};
+
+const isValidEncounteredEnemies = (enemies: unknown, active: ExpeditionSimulationMetadata) =>
+  Array.isArray(enemies) && enemies.every((enemy) =>
+    isRecord(enemy) &&
+    nonEmptyString(enemy.id) &&
+    typeof enemy.name === "string" &&
+    typeof enemy.kind === "string" &&
+    typeof enemy.flavor === "string" &&
+    enemy.dungeonId === active.dungeonId &&
+    finiteNumber(enemy.hp) &&
+    enemy.hp >= 1 &&
+    nonNegativeNumber(enemy.attack) &&
+    nonNegativeNumber(enemy.defense) &&
+    nonNegativeNumber(enemy.speed) &&
+    (enemy.isBoss === undefined || typeof enemy.isBoss === "boolean"),
+  );
+
+const isValidRescuedUnit = (
+  unit: unknown,
+  active: ExpeditionSimulationMetadata,
+  participantIds: Set<string>,
+): unit is GameUnit =>
+  isRecord(unit) &&
+  nonEmptyString(unit.id) &&
+  unit.id.startsWith(`${active.id}-rescue-`) &&
+  !participantIds.has(unit.id) &&
+  nonEmptyString(unit.templateId) &&
+  UNIT_TEMPLATE_IDS.has(unit.templateId) &&
+  typeof unit.name === "string" &&
+  typeof unit.species === "string" &&
+  typeof unit.emoji === "string" &&
+  typeof unit.rarity === "string" &&
+  RARITIES.has(unit.rarity as Rarity) &&
+  Number.isInteger(unit.level) &&
+  (unit.level as number) >= 1 &&
+  nonNegativeNumber(unit.exp) &&
+  finiteNumber(unit.expToNext) &&
+  unit.expToNext >= 1 &&
+  finiteNumber(unit.maxHp) &&
+  unit.maxHp >= 1 &&
+  finiteNumber(unit.currentHp) &&
+  unit.currentHp >= 1 &&
+  unit.currentHp <= unit.maxHp &&
+  nonNegativeNumber(unit.atk) &&
+  nonNegativeNumber(unit.def) &&
+  nonNegativeNumber(unit.spd) &&
+  unit.status === "idle" &&
+  unit.recoveryUntil === undefined;
+
+const isValidRawOutcome = (
+  outcome: unknown,
+  active: ExpeditionSimulationMetadata,
+  snapshot: ExpeditionDepartureSnapshotV1,
+): outcome is ExpeditionRawOutcomeV1 => {
+  if (!isRecord(outcome) || !isRecord(outcome.record) || !Array.isArray(outcome.party) || !Array.isArray(outcome.rescuedUnits)) {
+    return false;
+  }
+  const record = outcome.record;
+  const rescuedUnits = outcome.rescuedUnits;
+  if (
+    record.id !== active.id ||
+    record.dungeonId !== active.dungeonId ||
+    !nonEmptyString(record.dungeonName) ||
+    record.startedAt !== active.startedAt ||
+    record.endedAt !== active.endsAt ||
+    typeof record.status !== "string" ||
+    !["success", "failure", "retreat"].includes(record.status) ||
+    !Array.isArray(record.unitNames) ||
+    !record.unitNames.every((name) => typeof name === "string") ||
+    record.unitNames.length !== active.unitIds.length ||
+    !record.unitNames.every((name, index) => name === snapshot.party[index]?.name) ||
+    record.strategy !== active.strategy ||
+    !Array.isArray(record.logs) ||
+    record.logs.length === 0 ||
+    !isValidRewards(record.rewards)
+  ) {
+    return false;
+  }
+  const logIds = new Set<string>();
+  let previousLogAt = Number.NEGATIVE_INFINITY;
+  const logsValid = record.logs.every((log) => {
+    if (
+      !isRecord(log) ||
+      !nonEmptyString(log.id) ||
+      logIds.has(log.id) ||
+      !finiteNumber(log.at) ||
+      log.at < active.startedAt ||
+      log.at > active.endsAt ||
+      log.at < previousLogAt ||
+      typeof log.type !== "string" ||
+      !LOG_TYPES.has(log.type as LogType) ||
+      typeof log.message !== "string"
+    ) {
+      return false;
+    }
+    logIds.add(log.id);
+    previousLogAt = log.at;
+    return true;
+  });
+  const firstCompletionIndex = record.logs.findIndex(
+    (log) => isRecord(log) && typeof log.type === "string" && COMPLETION_LOG_TYPES.has(log.type as LogType),
+  );
+  const expectedProgressLogCount = firstCompletionIndex < 0 ? record.logs.length : firstCompletionIndex;
+  if (
+    !logsValid ||
+    !isRecord(record.logs[0]) ||
+    record.logs[0].at !== active.startedAt ||
+    !Number.isInteger(outcome.progressLogCount) ||
+    outcome.progressLogCount !== expectedProgressLogCount ||
+    record.logs.some((log, index) =>
+      !isRecord(log) ||
+      !finiteNumber(log.at) ||
+      (index < expectedProgressLogCount ? log.at >= active.endsAt : log.at !== active.endsAt),
+    ) ||
+    outcome.party.length !== active.unitIds.length
+  ) {
+    return false;
+  }
+  const partyIds = new Set<string>();
+  const partyValid = outcome.party.every((entry, index) => {
+    if (
+      !isRecord(entry) ||
+      entry.unitId !== active.unitIds[index] ||
+      !nonEmptyString(entry.unitId) ||
+      partyIds.has(entry.unitId) ||
+      !nonNegativeNumber(entry.battleEndHp) ||
+      entry.battleEndHp > snapshot.party[index].maxHp ||
+      (entry.battleEndHp === 0
+        ? !finiteNumber(entry.recoveryUntil) || entry.recoveryUntil < active.endsAt
+        : entry.recoveryUntil !== undefined)
+    ) {
+      return false;
+    }
+    partyIds.add(entry.unitId);
+    return true;
+  });
+  const participantIds = new Set(active.unitIds);
+  if (!partyValid || !rescuedUnits.every((unit) => isValidRescuedUnit(unit, active, participantIds))) {
+    return false;
+  }
+  const rescuedIds = rescuedUnits.map((unit) => unit.id);
+  if (new Set(rescuedIds).size !== rescuedIds.length) {
+    return false;
+  }
+  const summaries = (record.rewards as UnknownRecord).rescuedUnits as unknown[];
+  if (
+    summaries.length !== rescuedIds.length ||
+    !summaries.every((entry, index) => {
+      const rescued = rescuedUnits[index];
+      return isRecord(entry) &&
+        entry.unitId === rescued.id &&
+        entry.name === rescued.name &&
+        entry.species === rescued.species &&
+        entry.rarity === rescued.rarity;
+    })
+  ) {
+    return false;
+  }
+  const rewards = record.rewards as UnknownRecord;
+  if (isRecord(rewards.mvp)) {
+    const unitIndex = active.unitIds.indexOf(String(rewards.mvp.unitId));
+    if (
+      unitIndex < 0 ||
+      typeof rewards.mvp.name !== "string" ||
+      rewards.mvp.name !== snapshot.party[unitIndex].name ||
+      typeof rewards.mvp.title !== "string" ||
+      typeof rewards.mvp.note !== "string"
+    ) {
+      return false;
+    }
+  }
+  if (!isValidBattleLog(record.battleLog)) {
+    return false;
+  }
+  if (!isValidEncounteredEnemies(record.encounteredEnemies, active)) {
+    return false;
+  }
+  return true;
+};
+
+const normalizeV6ActiveExpedition = (active: unknown, units: GameUnit[]): ExpeditionState | undefined => {
+  if (!isRecord(active)) {
+    return undefined;
+  }
+  const legacy = normalizeLegacyActiveMetadata(active, units);
+  if (
+    !legacy.metadata ||
+    !nonEmptyString(active.id) ||
+    !Number.isInteger(active.durationSeconds) ||
+    active.simulationVersion !== 1 ||
+    !nonEmptyString(active.seed) ||
+    !isValidSnapshot(active.snapshot, legacy.metadata) ||
+    !isValidRawOutcome(active.outcome, legacy.metadata, active.snapshot)
+  ) {
+    return undefined;
+  }
+  return {
+    ...legacy.metadata,
+    simulationVersion: 1,
+    seed: active.seed,
+    snapshot: active.snapshot,
+    outcome: active.outcome,
   };
 };
 
@@ -664,27 +1032,21 @@ const normalizeCollectionRewards = (
   };
 };
 
-const normalizeGameState = (saved: UnknownRecord): GameState => {
+interface NormalizeGameStateResult {
+  state: GameState;
+  activeRecoveryReason?: string;
+  migrationNote?: string;
+}
+
+const normalizeGameState = (saved: UnknownRecord, sourceVersion: number): NormalizeGameStateResult => {
   const fallback = createVersionedInitialState();
   const inventory = normalizeInventory(saved.inventory, fallback.inventory);
   const records = normalizeRecords(saved.records);
   const normalizedUnits = normalizeUnits(saved.units, fallback.units);
-  const activeExpedition = normalizeActiveExpedition(saved.activeExpedition, normalizedUnits);
-  const units = activeExpedition
-    ? normalizedUnits
-    : normalizedUnits.map((unit) => (unit.status === "expedition" ? { ...unit, status: "idle" as const } : unit));
-  const collection = normalizeCollection(
-    saved.collection,
-    fallback.collection,
-    units,
-    inventory,
-    records,
-    activeExpedition?.dungeonId,
-  );
   const bossRecords = normalizeBossRecords(saved.bossRecords, records);
   const dungeonMastery = normalizeDungeonMastery(saved.dungeonMastery, records, bossRecords);
 
-  const normalized: GameState = {
+  const provisional: GameState = {
     ...fallback,
     version: SAVE_VERSION,
     demonLordName: stringOr(saved.demonLordName, fallback.demonLordName).slice(0, 16),
@@ -696,11 +1058,11 @@ const normalizeGameState = (saved: UnknownRecord): GameState => {
     unitCapacity: integerAtLeast(saved.unitCapacity, fallback.unitCapacity, 1),
     itemCapacity: integerAtLeast(saved.itemCapacity, fallback.itemCapacity, 1),
     maxPartySize: integerAtLeast(saved.maxPartySize, fallback.maxPartySize, 1),
-    units,
+    units: normalizedUnits,
     inventory,
-    activeExpedition,
+    activeExpedition: undefined,
     records,
-    collection,
+    collection: normalizeCollection(saved.collection, fallback.collection, normalizedUnits, inventory, records),
     achievements: normalizeAchievements(saved.achievements, fallback.achievements),
     bossRecords,
     dungeonMastery,
@@ -711,12 +1073,78 @@ const normalizeGameState = (saved: UnknownRecord): GameState => {
     updatedAt: numberOr(saved.updatedAt, fallback.updatedAt),
   };
 
+  let activeExpedition: ExpeditionState | undefined;
+  let activeRecoveryReason: string | undefined;
+  let migrationNote: string | undefined;
+  const hasSavedActive = saved.activeExpedition !== undefined && saved.activeExpedition !== null;
+
+  if (hasSavedActive && sourceVersion < 6) {
+    const legacy = normalizeLegacyActiveMetadata(saved.activeExpedition, normalizedUnits);
+    if (legacy.metadata) {
+      // v5 active expedition is upgraded once from the normalized migration-time state because the original departure snapshot was not stored.
+      const snapshot = createExpeditionDepartureSnapshotV1(provisional, legacy.metadata);
+      const seed = createLegacyV5ExpeditionSeed({
+        expeditionId: legacy.metadata.id,
+        dungeonId: legacy.metadata.dungeonId,
+        unitIds: legacy.metadata.unitIds,
+        strategy: legacy.metadata.strategy,
+        itemId: legacy.metadata.itemId,
+        startedAt: legacy.metadata.startedAt,
+        endsAt: legacy.metadata.endsAt,
+        durationSeconds: legacy.metadata.durationSeconds,
+      });
+      activeExpedition = {
+        ...legacy.metadata,
+        simulationVersion: 1,
+        seed,
+        snapshot,
+        outcome: createExpeditionRawOutcomeV1(provisional, legacy.metadata, seed, snapshot),
+      };
+    } else {
+      migrationNote = legacy.reason;
+    }
+  } else if (hasSavedActive) {
+    activeExpedition = normalizeV6ActiveExpedition(saved.activeExpedition, normalizedUnits);
+    if (!activeExpedition) {
+      activeRecoveryReason = "破損した進行中遠征だけを解除しました。保存済み結果の再抽選は行っていません。";
+    }
+  }
+
+  const units = activeExpedition
+    ? normalizedUnits.map((unit) =>
+        activeExpedition?.unitIds.includes(unit.id)
+          ? { ...unit, status: "expedition" as const, recoveryUntil: undefined }
+          : unit.status === "expedition"
+            ? { ...unit, status: "idle" as const }
+            : unit,
+      )
+    : normalizedUnits.map((unit) =>
+        unit.status === "expedition" ? { ...unit, status: "idle" as const, recoveryUntil: undefined } : unit,
+      );
+  const normalized: GameState = {
+    ...provisional,
+    units,
+    activeExpedition,
+    collection: normalizeCollection(
+      saved.collection,
+      fallback.collection,
+      units,
+      inventory,
+      records,
+      activeExpedition?.dungeonId,
+    ),
+  };
+
   const withSafeTitle = {
     ...normalized,
     selectedTitleId: normalizeSelectedTitleId(normalized),
   };
 
-  return evaluateAchievements(withSafeTitle, withSafeTitle.updatedAt).state;
+  return {
+    state: evaluateAchievements(withSafeTitle, withSafeTitle.updatedAt).state,
+    activeRecoveryReason,
+    migrationNote,
+  };
 };
 
 const recoverCorruptSave = (raw: string, reason: string): LoadGameResult => {
@@ -774,7 +1202,24 @@ export const loadSavedGame = (): LoadGameResult => {
     }
 
     const migration = migrateSaveData(parsed);
-    const state = normalizeGameState(migration.data);
+    const normalized = normalizeGameState(migration.data, migration.fromVersion);
+    const state = normalized.state;
+
+    if (normalized.activeRecoveryReason) {
+      const backup = backupRawSave(raw, "corrupt-active-expedition");
+      const saveResult = backup.failed ? undefined : saveGameState(state);
+      const backupText = backup.failed
+        ? ` ${backup.message ?? "進行中遠征の復旧前バックアップを作成できませんでした。"}`
+        : ` 元データは ${backup.key} に退避しています。`;
+      const saveText = saveResult && !saveResult.ok ? ` ${saveResult.message}` : "";
+      return {
+        state,
+        status: "recovered",
+        backupKey: backup.key,
+        canSave: !backup.failed && Boolean(saveResult?.ok),
+        message: `${normalized.activeRecoveryReason}${backupText}${saveText}`,
+      };
+    }
 
     if (migration.migrated) {
       const backup = backupRawSave(raw, `pre-migration-v${migration.fromVersion}`);
@@ -786,7 +1231,7 @@ export const loadSavedGame = (): LoadGameResult => {
         status: "migrated",
         backupKey: backup.key,
         migratedFrom: migration.fromVersion,
-        message: `古いセーブデータをversion ${SAVE_VERSION}へ移行しました。${backupText}${saveText}`,
+        message: `古いセーブデータをversion ${SAVE_VERSION}へ移行しました。${normalized.migrationNote ?? ""}${backupText}${saveText}`,
       };
     }
 

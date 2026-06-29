@@ -5,10 +5,12 @@ const { renderToStaticMarkup } = require("react-dom/server");
 
 const { createInitialState, createUnit } = require("../.tmp-tests/src/lib/progression.js");
 const {
-  advanceGameWithSimulationSeed,
+  advanceGame,
   claimCollectionReward,
+  getActiveExpeditionLogs,
   hireUnit,
   startExpedition,
+  startExpeditionWithSeed,
 } = require("../.tmp-tests/src/lib/expedition.js");
 const { simulateExpedition, simulateExpeditionV1 } = require("../.tmp-tests/src/lib/battle.js");
 const { createSeededRng, pick, randomInt, randomRange } = require("../.tmp-tests/src/lib/rng.js");
@@ -583,17 +585,185 @@ test("遠征開始でアクティブ遠征とユニット状態が更新され�
   assert.ok(result.state.collection.dungeons.includes("ash-border-village"));
 });
 
+test("遠征開始時にseed・snapshot・raw outcomeを保存し、持ち込みitemを一度だけ消費する", () => {
+  const base = createInitialState();
+  const second = createUnit("thorn-kobold", { id: "snapshot-second" });
+  const state = { ...base, units: [...base.units, second] };
+  const beforeQuantity = state.inventory.find((item) => item.itemId === "iron-ration").quantity;
+  const result = startExpedition(
+    state,
+    "ash-border-village",
+    [second.id, base.units[0].id],
+    "balanced",
+    "iron-ration",
+  );
+  const active = result.state.activeExpedition;
+
+  assert.equal(result.ok, true);
+  assert.equal(active.simulationVersion, 1);
+  assert.match(active.seed, /^seed-v1-[0-9a-f]{32}$/);
+  assert.deepEqual(active.snapshot.party.map((unit) => unit.id), active.unitIds);
+  assert.equal(active.snapshot.demonLordLevel, state.demonLordLevel);
+  assert.equal(active.outcome.record.id, active.id);
+  assert.equal(Object.hasOwn(active.outcome, "rewards"), false);
+  assert.deepEqual(active.outcome.party.map((unit) => unit.unitId), active.unitIds);
+  assert.equal(state.inventory.find((item) => item.itemId === "iron-ration").quantity, beforeQuantity);
+  assert.equal(
+    result.state.inventory.find((item) => item.itemId === "iron-ration").quantity,
+    beforeQuantity - 1,
+  );
+
+  const repeated = startExpedition(
+    result.state,
+    "ash-border-village",
+    active.unitIds,
+    "balanced",
+    "iron-ration",
+  );
+  assert.equal(repeated.ok, false);
+  assert.deepEqual(repeated.state.inventory, result.state.inventory);
+  assert.deepEqual(repeated.state.activeExpedition.outcome, active.outcome);
+});
+
+test("保存済みoutcomeはlive state変更後も唯一の正本として帰還処理に使われる", () => {
+  const state = createInitialState();
+  const unitId = state.units[0].id;
+  const started = startExpeditionWithSeed(state, "ash-border-village", [unitId], "balanced", SUCCESS_SEED);
+  const rawOutcome = structuredClone(started.state.activeExpedition.outcome);
+  const changedName = "帰還前に改名";
+  const liveChanged = {
+    ...started.state,
+    demonLordLevel: 99,
+    itemCapacity: 99,
+    unitCapacity: 99,
+    dungeonMastery: [{ dungeonId: "ash-border-village", clearCount: 50 }],
+    units: started.state.units.map((unit) =>
+      unit.id === unitId
+        ? { ...unit, name: changedName, atk: unit.atk + 500, def: unit.def + 500, spd: unit.spd + 500 }
+        : unit,
+    ),
+  };
+  const finished = advanceGame(liveChanged, started.state.activeExpedition.endsAt + 1);
+
+  assert.deepEqual(started.state.activeExpedition.outcome, rawOutcome);
+  assert.equal(finished.records[0].status, rawOutcome.record.status);
+  assert.equal(finished.records[0].rewards.gold, rawOutcome.record.rewards.gold);
+  assert.equal(finished.records[0].rewards.unitExp, rawOutcome.record.rewards.unitExp);
+  assert.equal(finished.units.find((unit) => unit.id === unitId).name, changedName);
+  assert.ok(finished.units.find((unit) => unit.id === unitId).atk >= liveChanged.units[0].atk);
+});
+
+test("active logsは保存済みfinal logsの結果非公開prefixで、時刻とreloadに対して安定する", () => {
+  const state = createInitialState();
+  const started = startExpeditionWithSeed(
+    state,
+    "ash-border-village",
+    [state.units[0].id],
+    "balanced",
+    SUCCESS_SEED,
+  ).state;
+  const active = started.activeExpedition;
+  const progressLogs = active.outcome.record.logs.slice(0, active.outcome.progressLogCount);
+  const early = getActiveExpeditionLogs(started, active.startedAt);
+  const middleTime = active.startedAt + Math.floor((active.endsAt - active.startedAt) * 0.6);
+  const middle = getActiveExpeditionLogs(started, middleTime);
+  const reloaded = JSON.parse(JSON.stringify(started));
+  const afterReload = getActiveExpeditionLogs(reloaded, middleTime);
+
+  assert.equal(early.length, 1);
+  assert.deepEqual(middle, progressLogs.slice(0, middle.length));
+  assert.deepEqual(afterReload, middle);
+  assert.deepEqual(middle.map(({ id, message }) => ({ id, message })), progressLogs.slice(0, middle.length).map(({ id, message }) => ({ id, message })));
+  assert.ok(middle.length > early.length);
+  assert.ok(progressLogs.every((log, index) => index === 0 || log.at >= progressLogs[index - 1].at));
+  assert.ok(progressLogs.every((log) => log.at <= active.startedAt + (active.endsAt - active.startedAt) * 0.85));
+  assert.ok(active.outcome.record.logs.every((log, index, logs) => index === 0 || log.at >= logs[index - 1].at));
+  assert.ok(active.outcome.record.logs.slice(active.outcome.progressLogCount).every((log) => log.at === active.endsAt));
+  assert.equal(progressLogs[0].at, active.startedAt);
+  assert.equal(progressLogs.some((log) => ["success", "failure", "retreat", "loot", "rescue"].includes(log.type)), false);
+  assert.equal(middle.some((log) => log.message.includes("MVP")), false);
+});
+
+test("raw救出候補は配下容量に依存せず、受入制限は帰還時だけ適用される", () => {
+  const base = createInitialState();
+  const active = {
+    id: "capacity-independent-expedition",
+    dungeonId: "ash-border-village",
+    unitIds: [base.units[0].id],
+    strategy: "balanced",
+    startedAt: 1_000,
+    endsAt: 31_000,
+    durationSeconds: 30,
+  };
+  const spacious = simulateExpeditionV1({ ...base, unitCapacity: 99 }, active, SUCCESS_SEED);
+  const full = simulateExpeditionV1({ ...base, unitCapacity: base.units.length }, active, SUCCESS_SEED);
+  assert.deepEqual(full.rescuedUnits, spacious.rescuedUnits);
+  assert.deepEqual(full.record.logs, spacious.record.logs);
+
+  const started = startExpeditionWithSeed(base, "ash-border-village", [base.units[0].id], "balanced", SUCCESS_SEED).state;
+  const rescue = createUnit("thorn-kobold", { id: `${started.activeExpedition.id}-rescue-test` });
+  const activeWithRawRewards = {
+    ...started.activeExpedition,
+    outcome: {
+      ...started.activeExpedition.outcome,
+      rescuedUnits: [rescue],
+      record: {
+        ...started.activeExpedition.outcome.record,
+        rewards: {
+          ...started.activeExpedition.outcome.record.rewards,
+          items: [{ itemId: "moon-rust", quantity: 2 }],
+          rescuedUnits: [{ unitId: rescue.id, name: rescue.name, species: rescue.species, rarity: rescue.rarity }],
+        },
+      },
+    },
+  };
+  const rawBefore = structuredClone(activeWithRawRewards.outcome);
+  const fullState = {
+    ...started,
+    activeExpedition: activeWithRawRewards,
+    unitCapacity: started.units.length,
+    itemCapacity: started.inventory.reduce((sum, item) => sum + item.quantity, 0),
+  };
+  const finished = advanceGame(fullState, activeWithRawRewards.endsAt + 1);
+
+  assert.deepEqual(activeWithRawRewards.outcome, rawBefore);
+  assert.deepEqual(finished.records[0].rewards.items, []);
+  assert.deepEqual(finished.records[0].rewards.rescuedUnits, []);
+  assert.equal(finished.units.some((unit) => unit.id === rescue.id), false);
+  assert.equal(finished.collection.items.includes("moon-rust"), false);
+  assert.ok(finished.records[0].logs.some((log) => log.id === `${activeWithRawRewards.id}-return-item-capacity-0`));
+  assert.ok(finished.records[0].logs.some((log) => log.id === `${activeWithRawRewards.id}-return-unit-capacity-0`));
+});
+
+test("同じrecord IDが既にある完了遠征は報酬を二重適用せずactiveだけ解除する", () => {
+  const base = createInitialState();
+  const started = startExpeditionWithSeed(base, "ash-border-village", [base.units[0].id], "balanced", SUCCESS_SEED).state;
+  const once = advanceGame(started, started.activeExpedition.endsAt + 1);
+  const duplicate = {
+    ...once,
+    activeExpedition: started.activeExpedition,
+    units: once.units.map((unit) =>
+      started.activeExpedition.unitIds.includes(unit.id) ? { ...unit, status: "expedition" } : unit,
+    ),
+  };
+  const twice = advanceGame(duplicate, started.activeExpedition.endsAt + 2);
+
+  assert.equal(twice.activeExpedition, undefined);
+  assert.equal(twice.gold, once.gold);
+  assert.equal(twice.demonLordExp, once.demonLordExp);
+  assert.deepEqual(twice.inventory, once.inventory);
+  assert.deepEqual(twice.dungeonMastery, once.dungeonMastery);
+  assert.equal(twice.records.filter((record) => record.id === started.activeExpedition.id).length, 1);
+  assert.equal(twice.units.find((unit) => unit.id === base.units[0].id).status, "idle");
+});
+
 test("遠征完了で報酬、経験値、実績、ボス討伐記録が反映される", () => {
   const state = createInitialState();
   const unitId = state.units[0].id;
-  const started = startExpedition(state, "ash-border-village", [unitId], "balanced");
+  const started = startExpeditionWithSeed(state, "ash-border-village", [unitId], "balanced", SUCCESS_SEED);
   assert.equal(started.ok, true);
 
-  const finished = advanceGameWithSimulationSeed(
-    started.state,
-    started.state.activeExpedition.endsAt + 1,
-    SUCCESS_SEED,
-  );
+  const finished = advanceGame(started.state, started.state.activeExpedition.endsAt + 1);
   const record = finished.records[0];
 
   assert.equal(finished.activeExpedition, undefined);
@@ -622,14 +792,10 @@ test("遠征完了で報酬、経験値、実績、ボス討伐記録が反映�
 test("遠征失敗時はダンジョン熟練度を増やさない", () => {
   const state = createInitialState();
   const unitId = state.units[0].id;
-  const started = startExpedition(state, "ash-border-village", [unitId], "balanced");
+  const started = startExpeditionWithSeed(state, "ash-border-village", [unitId], "balanced", FAILURE_SEED);
   assert.equal(started.ok, true);
 
-  const finished = advanceGameWithSimulationSeed(
-    started.state,
-    started.state.activeExpedition.endsAt + 1,
-    FAILURE_SEED,
-  );
+  const finished = advanceGame(started.state, started.state.activeExpedition.endsAt + 1);
   const mastery = finished.dungeonMastery.find((entry) => entry.dungeonId === "ash-border-village");
 
   assert.notEqual(finished.records[0].status, "success");
@@ -649,9 +815,9 @@ test("ダンジョン熟練度Lvをクリア回数から計算する", () => {
 test("ダンジョン熟練度ボーナスが成功時の金額とユニット経験値に反映される", () => {
   const runSuccess = (state) => {
     const unitId = state.units[0].id;
-    const started = startExpedition(state, "ash-border-village", [unitId], "balanced");
+    const started = startExpeditionWithSeed(state, "ash-border-village", [unitId], "balanced", SUCCESS_SEED);
     assert.equal(started.ok, true);
-    return advanceGameWithSimulationSeed(started.state, started.state.activeExpedition.endsAt + 1, SUCCESS_SEED);
+    return advanceGame(started.state, started.state.activeExpedition.endsAt + 1);
   };
 
   const normal = runSuccess(createInitialState());
@@ -707,7 +873,7 @@ test("未発見名を隠し、入手済みなら正式名と収集済み状態�
   assert.equal(obtained.items[0].displayName, "落王の印片");
   assert.equal(obtained.items[0].obtained, true);
   assert.equal(obtained.allObtained, true);
-  assert.equal(createInitialState().version, 5);
+  assert.equal(createInitialState().version, 6);
 });
 
 test("ダンジョン変更・候補なし・不完全な報酬データを安全に扱う", () => {
@@ -760,14 +926,10 @@ test("遠征成功時に受け取れたRare以上アイテムだけが図鑑と�
     })),
   };
 
-  const started = startExpedition(state, "gray-vein-mine", [state.units[0].id], "balanced");
+  const started = startExpeditionWithSeed(state, "gray-vein-mine", [state.units[0].id], "balanced", RARE_DROP_SEED);
   assert.equal(started.ok, true);
 
-  const finished = advanceGameWithSimulationSeed(
-    started.state,
-    started.state.activeExpedition.endsAt + 1,
-    RARE_DROP_SEED,
-  );
+  const finished = advanceGame(started.state, started.state.activeExpedition.endsAt + 1);
   const record = finished.records[0];
   const itemIds = record.rewards.items.map((item) => item.itemId);
   const achievementIds = finished.achievements.unlocked.map((entry) => entry.achievementId);
@@ -804,14 +966,10 @@ test("インベントリ満杯時、未受取レアは図鑑登録されず初�
     })),
   };
 
-  const started = startExpedition(state, "gray-vein-mine", [state.units[0].id], "balanced");
+  const started = startExpeditionWithSeed(state, "gray-vein-mine", [state.units[0].id], "balanced", RARE_DROP_SEED);
   assert.equal(started.ok, true);
 
-  const finished = advanceGameWithSimulationSeed(
-    started.state,
-    started.state.activeExpedition.endsAt + 1,
-    RARE_DROP_SEED,
-  );
+  const finished = advanceGame(started.state, started.state.activeExpedition.endsAt + 1);
   const record = finished.records[0];
 
   assert.equal(record.status, "success");
@@ -1123,8 +1281,8 @@ test("遠征準備ガイドは配下未選択と準備完了を区別する", ()
   assert.equal(ready.steps.find((step) => step.id === "item").status, "optional");
 });
 
-test("GameState.versionはv0.6でも5のまま", () => {
-  assert.equal(createInitialState().version, 5);
+test("GameState.versionは保存形式v6を使用する", () => {
+  assert.equal(createInitialState().version, 6);
 });
 
 test("surviving expedition participants return at full HP after battle damage", () => {
@@ -1135,14 +1293,10 @@ test("surviving expedition participants return at full HP after battle damage", 
     maxPartySize: 4,
     units: [unit],
   };
-  const started = startExpedition(state, "ash-border-village", [unit.id], "balanced");
+  const started = startExpeditionWithSeed(state, "ash-border-village", [unit.id], "balanced", SUCCESS_SEED);
   assert.equal(started.ok, true);
 
-  const finished = advanceGameWithSimulationSeed(
-    started.state,
-    started.state.activeExpedition.endsAt + 1,
-    SUCCESS_SEED,
-  );
+  const finished = advanceGame(started.state, started.state.activeExpedition.endsAt + 1);
   const finishedUnit = finished.units.find((candidate) => candidate.id === unit.id);
   const record = finished.records[0];
   const hpDamageEntries = record.battleLog.filter(
@@ -1171,14 +1325,10 @@ test("surviving expedition participants heal to leveled max HP while records kee
     ...base,
     units: [unit],
   };
-  const started = startExpedition(state, "ash-border-village", [unit.id], "balanced");
+  const started = startExpeditionWithSeed(state, "ash-border-village", [unit.id], "balanced", SUCCESS_SEED);
   assert.equal(started.ok, true);
 
-  const finished = advanceGameWithSimulationSeed(
-    started.state,
-    started.state.activeExpedition.endsAt + 1,
-    SUCCESS_SEED,
-  );
+  const finished = advanceGame(started.state, started.state.activeExpedition.endsAt + 1);
   const finishedUnit = finished.units.find((candidate) => candidate.id === unit.id);
   const record = finished.records[0];
   const hpDamageEntries = record.battleLog.filter(
@@ -1198,7 +1348,7 @@ test("surviving expedition participants heal to leveled max HP while records kee
   assert.ok(finished.territoryLiberation > state.territoryLiberation);
   assert.ok(finished.demonLordExp > state.demonLordExp || finished.demonLordLevel > state.demonLordLevel);
   assert.ok(finished.dungeonMastery.find((entry) => entry.dungeonId === "ash-border-village").clearCount >= 1);
-  assert.equal(finished.version, 5);
+  assert.equal(finished.version, 6);
 });
 
 test("downed expedition participants stay downed after experience and keep recovery timer", () => {
@@ -1212,16 +1362,12 @@ test("downed expedition participants stay downed after experience and keep recov
     ...base,
     units: [unit],
   };
-  const started = startExpedition(state, "ash-border-village", [unit.id], "balanced");
+  const started = startExpeditionWithSeed(state, "ash-border-village", [unit.id], "balanced", FAILURE_SEED);
   assert.equal(started.ok, true);
   const expectedRecoveryUntil =
     started.state.activeExpedition.endsAt + templateById(unit.templateId).recoverySeconds * 1000;
 
-  const finished = advanceGameWithSimulationSeed(
-    started.state,
-    started.state.activeExpedition.endsAt + 1,
-    FAILURE_SEED,
-  );
+  const finished = advanceGame(started.state, started.state.activeExpedition.endsAt + 1);
   const finishedUnit = finished.units.find((candidate) => candidate.id === unit.id);
   const record = finished.records[0];
   const downedDamage = record.battleLog.find(
@@ -1233,7 +1379,7 @@ test("downed expedition participants stay downed after experience and keep recov
   assert.equal(finishedUnit.status, "downed");
   assert.equal(finishedUnit.recoveryUntil, expectedRecoveryUntil);
   assert.ok(downedDamage);
-  assert.equal(finished.version, 5);
+  assert.equal(finished.version, 6);
 });
 
 test("non-participating injured units are not changed when an expedition finishes", () => {
@@ -1255,17 +1401,13 @@ test("non-participating injured units are not changed when an expedition finishe
     maxPartySize: 4,
     units: [participant, idleBystander, downedBystander],
   };
-  const started = startExpedition(state, "ash-border-village", [participant.id], "balanced");
+  const started = startExpeditionWithSeed(state, "ash-border-village", [participant.id], "balanced", SUCCESS_SEED);
   assert.equal(started.ok, true);
 
-  const finished = advanceGameWithSimulationSeed(
-    started.state,
-    started.state.activeExpedition.endsAt + 1,
-    SUCCESS_SEED,
-  );
+  const finished = advanceGame(started.state, started.state.activeExpedition.endsAt + 1);
 
   assert.deepEqual(finished.units.find((unit) => unit.id === idleBystander.id), idleBystander);
   assert.deepEqual(finished.units.find((unit) => unit.id === downedBystander.id), downedBystander);
   assert.equal(finished.units.find((unit) => unit.id === participant.id).currentHp, participant.maxHp);
-  assert.equal(finished.version, 5);
+  assert.equal(finished.version, 6);
 });

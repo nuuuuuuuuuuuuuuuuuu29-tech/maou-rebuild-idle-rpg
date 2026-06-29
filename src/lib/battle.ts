@@ -8,7 +8,7 @@ import type {
   ExpeditionMvp,
   ExpeditionRecord,
   ExpeditionRewards,
-  ExpeditionState,
+  ExpeditionSimulationMetadata,
   GameState,
   GameUnit,
   LogEntry,
@@ -36,7 +36,7 @@ const unitPower = (unit: GameUnit) =>
 const enemyPower = (enemy: DungeonEnemy, difficulty: number) =>
   enemy.hp * 0.33 + enemy.atk * 1.75 + enemy.def * 1.2 + enemy.spd + difficulty * 15;
 
-const makeLog = (active: ExpeditionState, index: number, type: LogEntry["type"], message: string) => {
+const makeLog = (active: ExpeditionSimulationMetadata, index: number, type: LogEntry["type"], message: string) => {
   const step = active.durationSeconds * 1000 * (index / 12);
   return {
     id: `${active.id}-log-${index}`,
@@ -356,7 +356,7 @@ const hasRareReward = (items: RewardItemStack[], rescuedUnits: GameUnit[]) =>
 
 const chooseMvp = (
   party: GameUnit[],
-  strategyId: ExpeditionState["strategy"],
+  strategyId: ExpeditionSimulationMetadata["strategy"],
   gameplayRng: Rng,
   presentationRng: Rng,
 ): ExpeditionMvp | undefined => {
@@ -418,7 +418,7 @@ const collectRewardItems = (
 
 export const simulateExpeditionV1 = (
   state: GameState,
-  active: ExpeditionState,
+  active: ExpeditionSimulationMetadata,
   seed: string,
 ): BattleSimulationResult => {
   const gameplayRng = createSeededRng(seed, "gameplay");
@@ -629,8 +629,7 @@ export const simulateExpeditionV1 = (
       0.18,
       0.78,
     );
-    const hasRoom = state.units.length < state.unitCapacity;
-    if (hasRoom && gameplayRng() <= rescueChance) {
+    if (gameplayRng() <= rescueChance) {
       const templateId = dungeon.rescuePool[randomInt(gameplayRng, 0, dungeon.rescuePool.length - 1)];
       const template = getUnitTemplate(templateId);
       const rescued = createUnit(templateId, {
@@ -646,9 +645,6 @@ export const simulateExpeditionV1 = (
           `牢の奥で鎖が鳴る。${template.species}を救出すると、新しい配下は黒旗へ静かに膝をついた。`,
         ),
       );
-      logIndex += 1;
-    } else if (!hasRoom) {
-      logs.push(makeLog(active, logIndex, "rescue", "牢の鍵は見つかったが、配下枠に余裕がなく救出部隊を残せなかった。"));
       logIndex += 1;
     }
   }
@@ -727,7 +723,7 @@ export const simulateExpeditionV1 = (
 
 export const simulateExpedition = (
   state: GameState,
-  active: ExpeditionState,
+  active: ExpeditionSimulationMetadata,
 ): BattleSimulationResult =>
   simulateExpeditionV1(
     state,

@@ -3,9 +3,17 @@ import { getDungeon } from "../data/dungeons";
 import { getItemDefinition } from "../data/items";
 import { getStrategy } from "../data/strategies";
 import { getUnitTemplate } from "../data/units";
-import type { GameState, GameUnit, StrategyId } from "../types/game";
+import type {
+  ExpeditionDepartureSnapshotV1,
+  ExpeditionRawOutcomeV1,
+  ExpeditionSimulationMetadata,
+  GameState,
+  GameUnit,
+  LogEntry,
+  StrategyId,
+} from "../types/game";
 import { evaluateAchievements, getCollectionRewardProgress, updateBossRecordsForRecord } from "./achievements";
-import { simulateExpedition, simulateExpeditionV1 } from "./battle";
+import { simulateExpeditionV1 } from "./battle";
 import { formatDungeonMasteryBonus, getDungeonMasteryInfo, updateDungeonMasteryForRecord } from "./mastery";
 import {
   addInventoryStacks,
@@ -18,7 +26,13 @@ import {
   recoverUnits,
   removeInventoryItem,
 } from "./progression";
-import { formatRareDropItems, getFirstDiscoveredRareDropItems, getRareDropItems } from "./rareDrops";
+import {
+  formatRareDropItems,
+  getFirstDiscoveredRareDropItems,
+  getRareDropItems,
+  getRareDropMasteryBonus,
+} from "./rareDrops";
+import { createExpeditionSeed } from "./rng";
 
 export interface GameActionResult {
   ok: boolean;
@@ -41,28 +55,96 @@ const rarityBonus = {
 const totalItemQuantity = (items: { quantity: number }[]) =>
   items.reduce((total, item) => total + item.quantity, 0);
 
-const restoreSurvivingParticipants = (
-  units: GameUnit[],
-  participantIds: Set<string>,
-  battlePartyById: Map<string, GameUnit>,
-) =>
-  units.map((unit) => {
-    if (!participantIds.has(unit.id)) {
-      return unit;
-    }
+const COMPLETION_LOG_TYPES = new Set<LogEntry["type"]>(["success", "failure", "retreat", "loot", "rescue"]);
 
-    const battleUnit = battlePartyById.get(unit.id);
-    if (!battleUnit || battleUnit.currentHp <= 0) {
-      return unit;
-    }
+export const createExpeditionDepartureSnapshotV1 = (
+  state: GameState,
+  active: ExpeditionSimulationMetadata,
+): ExpeditionDepartureSnapshotV1 => {
+  const mastery = getDungeonMasteryInfo(state, active.dungeonId);
+  return {
+    demonLordLevel: state.demonLordLevel,
+    party: active.unitIds.flatMap((unitId) => {
+      const unit = state.units.find((candidate) => candidate.id === unitId);
+      return unit
+        ? [{
+            id: unit.id,
+            templateId: unit.templateId,
+            name: unit.name,
+            level: unit.level,
+            maxHp: unit.maxHp,
+            currentHp: unit.currentHp,
+            atk: unit.atk,
+            def: unit.def,
+            spd: unit.spd,
+          }]
+        : [];
+    }),
+    mastery: {
+      clearCount: mastery.clearCount,
+      level: mastery.level,
+      rareDropBonus: getRareDropMasteryBonus(mastery.level),
+      goldMultiplier: mastery.bonus.goldMultiplier,
+      unitExpMultiplier: mastery.bonus.unitExpMultiplier,
+    },
+  };
+};
 
-    return {
-      ...unit,
-      currentHp: unit.maxHp,
-      status: "idle" as const,
-      recoveryUntil: undefined,
-    };
-  });
+const scheduleOutcomeLogs = (active: ExpeditionSimulationMetadata, logs: LogEntry[]) => {
+  const firstCompletion = logs.findIndex((log) => COMPLETION_LOG_TYPES.has(log.type));
+  const progressLogCount = firstCompletion < 0 ? logs.length : firstCompletion;
+  const progressWindow = Math.max(0, active.endsAt - active.startedAt) * 0.85;
+  const denominator = Math.max(1, progressLogCount - 1);
+  const scheduled = logs.map((log, index) => ({
+    ...log,
+    at:
+      index < progressLogCount
+        ? index === 0
+          ? active.startedAt
+          : active.startedAt + Math.floor(progressWindow * (index / denominator))
+        : active.endsAt,
+  }));
+  return { logs: scheduled, progressLogCount };
+};
+
+export const createExpeditionRawOutcomeV1 = (
+  state: GameState,
+  active: ExpeditionSimulationMetadata,
+  seed: string,
+  snapshot: ExpeditionDepartureSnapshotV1,
+): ExpeditionRawOutcomeV1 => {
+  const simulation = simulateExpeditionV1(state, active, seed);
+  const masteryApplies = simulation.record.status === "success" && snapshot.mastery.level > 0;
+  const rewards = {
+    demonExp: simulation.rewards.demonExp,
+    territory: simulation.rewards.territory,
+    gold: masteryApplies
+      ? Math.round(simulation.rewards.gold * snapshot.mastery.goldMultiplier)
+      : simulation.rewards.gold,
+    unitExp: masteryApplies
+      ? Math.round(simulation.rewards.unitExp * snapshot.mastery.unitExpMultiplier)
+      : simulation.rewards.unitExp,
+    items: simulation.rewards.items.map((item) => ({ ...item })),
+    rescuedUnits: simulation.rewards.rescuedUnits.map((unit) => ({ ...unit })),
+    ...(simulation.rewards.mvp ? { mvp: { ...simulation.rewards.mvp } } : {}),
+  };
+  const scheduled = scheduleOutcomeLogs(active, simulation.record.logs);
+  return {
+    record: {
+      ...simulation.record,
+      endedAt: active.endsAt,
+      logs: scheduled.logs,
+      rewards,
+    },
+    party: simulation.partyUpdates.map((unit) => ({
+      unitId: unit.id,
+      battleEndHp: unit.currentHp,
+      ...(unit.recoveryUntil === undefined ? {} : { recoveryUntil: unit.recoveryUntil }),
+    })),
+    rescuedUnits: simulation.rescuedUnits.map((unit) => ({ ...unit })),
+    progressLogCount: scheduled.progressLogCount,
+  };
+};
 
 export const formatSeconds = (totalSeconds: number) => {
   const seconds = Math.max(0, Math.ceil(totalSeconds));
@@ -96,50 +178,40 @@ export const getActiveExpeditionLogs = (state: GameState, now: number) => {
   if (!active) {
     return [];
   }
-
-  const dungeon = getDungeon(active.dungeonId);
-  const party = active.unitIds
-    .map((id) => state.units.find((unit) => unit.id === id)?.name)
-    .filter((name): name is string => Boolean(name));
-  const ratio = getActiveProgress(state, now).ratio;
-  const entries = [
-    { at: active.startedAt, message: `${dungeon.name}へ出発。${party.join("、")}が黒旗を担ぐ。` },
-    { at: active.startedAt + (active.endsAt - active.startedAt) * 0.25, message: "入口付近で敵影を確認。斥候が低い合図を返した。" },
-    { at: active.startedAt + (active.endsAt - active.startedAt) * 0.5, message: "中層で古い物資箱を発見。開けるかどうか、隊長が短く迷う。" },
-    { at: active.startedAt + (active.endsAt - active.startedAt) * 0.75, message: "最深部の気配が濃い。魔王軍の足音が静かに揃う。" },
-  ];
-  const visibleCount = ratio >= 1 ? entries.length : Math.max(1, Math.ceil(ratio * entries.length));
-
-  return entries.slice(0, visibleCount).map((entry, index) => ({
-    id: `active-${active.id}-${index}`,
-    at: Math.floor(entry.at),
-    type: "info" as const,
-    message: entry.message,
-  }));
+  return active.outcome.record.logs
+    .slice(0, active.outcome.progressLogCount)
+    .filter((log) => log.at <= now);
 };
 
-const finishExpedition = (state: GameState, now: number, simulationSeed?: string): GameState => {
+const finishExpedition = (state: GameState, now: number): GameState => {
   if (!state.activeExpedition || state.activeExpedition.endsAt > now) {
     return state;
   }
 
   const active = state.activeExpedition;
-  const simulation = simulationSeed === undefined
-    ? simulateExpedition(state, active)
-    : simulateExpeditionV1(state, active, simulationSeed);
-  const masteryBefore = getDungeonMasteryInfo(state, active.dungeonId);
-  const masteryApplies = simulation.record.status === "success" && masteryBefore.level > 0;
-  const goldWithMastery = masteryApplies
-    ? Math.round(simulation.rewards.gold * masteryBefore.bonus.goldMultiplier)
-    : simulation.rewards.gold;
-  const unitExpWithMastery = masteryApplies
-    ? Math.round(simulation.rewards.unitExp * masteryBefore.bonus.unitExpMultiplier)
-    : simulation.rewards.unitExp;
+  if (state.records.some((record) => record.id === active.outcome.record.id)) {
+    return {
+      ...state,
+      activeExpedition: undefined,
+      units: state.units.map((unit) =>
+        active.unitIds.includes(unit.id) && unit.status === "expedition"
+          ? { ...unit, status: "idle" as const, recoveryUntil: undefined }
+          : unit,
+      ),
+      updatedAt: now,
+    };
+  }
+
+  const rawOutcome = active.outcome;
+  const rawRewards = rawOutcome.record.rewards;
   const participantIds = new Set(active.unitIds);
-  const partyById = new Map(simulation.partyUpdates.map((unit) => [unit.id, unit]));
-  const inventoryResult = addInventoryStacks(state.inventory, simulation.rewards.items, state.itemCapacity);
+  const partyById = new Map(rawOutcome.party.map((unit) => [unit.unitId, unit]));
+  const inventoryResult = addInventoryStacks(state.inventory, rawRewards.items, state.itemCapacity);
   const rescueRoom = Math.max(0, state.unitCapacity - state.units.length);
-  const acceptedRescues = simulation.rescuedUnits.slice(0, rescueRoom);
+  const existingUnitIds = new Set(state.units.map((unit) => unit.id));
+  const acceptedRescues = rawOutcome.rescuedUnits
+    .filter((unit) => !existingUnitIds.has(unit.id))
+    .slice(0, rescueRoom);
   const acceptedRescueSummaries = acceptedRescues.map((unit) => ({
     unitId: unit.id,
     name: unit.name,
@@ -147,32 +219,49 @@ const finishExpedition = (state: GameState, now: number, simulationSeed?: string
     rarity: unit.rarity,
   }));
   const rewards = {
-    ...simulation.rewards,
-    gold: goldWithMastery,
-    unitExp: unitExpWithMastery,
+    ...rawRewards,
     items: inventoryResult.accepted,
     rescuedUnits: acceptedRescueSummaries,
   };
 
   let units = state.units.map((unit) => {
-    const battleUnit = partyById.get(unit.id);
-    const mergedUnit = battleUnit ?? unit;
-    return participantIds.has(unit.id) ? applyUnitExperience(mergedUnit, rewards.unitExp) : mergedUnit;
+    const partyOutcome = partyById.get(unit.id);
+    if (!participantIds.has(unit.id) || !partyOutcome) {
+      return unit;
+    }
+
+    const downed = partyOutcome.battleEndHp <= 0;
+    const battleApplied: GameUnit = downed
+      ? {
+          ...unit,
+          currentHp: 0,
+          status: "downed",
+          recoveryUntil: partyOutcome.recoveryUntil,
+        }
+      : {
+          ...unit,
+          currentHp: Math.min(unit.maxHp, Math.max(1, partyOutcome.battleEndHp)),
+          status: "idle",
+          recoveryUntil: undefined,
+        };
+    const experienced = applyUnitExperience(battleApplied, rewards.unitExp);
+    return downed
+      ? { ...experienced, currentHp: 0, status: "downed" as const, recoveryUntil: partyOutcome.recoveryUntil }
+      : { ...experienced, currentHp: experienced.maxHp, status: "idle" as const, recoveryUntil: undefined };
   });
-  units = restoreSurvivingParticipants(units, participantIds, partyById);
   units = [...units, ...acceptedRescues];
 
   const levelUpLogs = units
     .filter((unit) => participantIds.has(unit.id))
     .flatMap((unit) => {
-      const before = partyById.get(unit.id) ?? state.units.find((candidate) => candidate.id === unit.id);
+      const before = state.units.find((candidate) => candidate.id === unit.id);
       if (!before || unit.level <= before.level) {
         return [];
       }
 
       return [
         {
-          id: makeId("log"),
+          id: `${active.id}-return-level-${unit.id}`,
           at: active.endsAt,
           type: "success" as const,
           message: `${unit.name}がLv${unit.level}に成長。HP ${unit.maxHp} / ATK ${unit.atk} / DEF ${unit.def} / SPD ${unit.spd}になった。`,
@@ -181,13 +270,24 @@ const finishExpedition = (state: GameState, now: number, simulationSeed?: string
     });
 
   const extraLogs =
-    totalItemQuantity(inventoryResult.accepted) < totalItemQuantity(simulation.rewards.items)
+    totalItemQuantity(inventoryResult.accepted) < totalItemQuantity(rawRewards.items)
       ? [
           {
-            id: makeId("log"),
+            id: `${active.id}-return-item-capacity-0`,
             at: active.endsAt,
             type: "loot" as const,
             message: "持ち帰り袋がいっぱいで、一部の戦利品は現地に隠してきた。",
+          },
+        ]
+      : [];
+  const rescueCapacityLogs =
+    acceptedRescues.length < rawOutcome.rescuedUnits.length
+      ? [
+          {
+            id: `${active.id}-return-unit-capacity-0`,
+            at: active.endsAt,
+            type: "rescue" as const,
+            message: "配下枠に余裕がなく、一部の救出候補を魔王城へ迎えられなかった。",
           },
         ]
       : [];
@@ -197,7 +297,7 @@ const finishExpedition = (state: GameState, now: number, simulationSeed?: string
     ...(acceptedRareDrops.length > 0
       ? [
           {
-            id: makeId("log"),
+            id: `${active.id}-return-rare-0`,
             at: active.endsAt,
             type: "loot" as const,
             message: `希少戦利品: ${formatRareDropItems(acceptedRareDrops)} を宝物庫に納めた。遠征隊の足跡に、薄い金の火が残る。`,
@@ -207,7 +307,7 @@ const finishExpedition = (state: GameState, now: number, simulationSeed?: string
     ...(firstRareDrops.length > 0
       ? [
           {
-            id: makeId("log"),
+            id: `${active.id}-return-first-rare-0`,
             at: active.endsAt,
             type: "success" as const,
             message: `初入手: ${formatRareDropItems(firstRareDrops)} を図鑑に刻んだ。次の周回で狙うべき影が、ひとつ増えた。`,
@@ -216,22 +316,29 @@ const finishExpedition = (state: GameState, now: number, simulationSeed?: string
       : []),
   ];
   const masteryBonusLogs =
-    masteryApplies && (goldWithMastery > simulation.rewards.gold || unitExpWithMastery > simulation.rewards.unitExp)
+    rawOutcome.record.status === "success" && active.snapshot.mastery.level > 0
       ? [
           {
-            id: makeId("log"),
+            id: `${active.id}-return-mastery-bonus-0`,
             at: active.endsAt,
             type: "loot" as const,
-            message: `熟練度Lv${masteryBefore.level}の地の利が働いた。${formatDungeonMasteryBonus(masteryBefore.level)}。`,
+            message: `出撃時の熟練度Lv${active.snapshot.mastery.level}の地の利が働いた。${formatDungeonMasteryBonus(active.snapshot.mastery.level)}。`,
           },
         ]
       : [];
 
   const record = {
-    ...simulation.record,
+    ...rawOutcome.record,
     endedAt: active.endsAt,
     rewards,
-    logs: [...simulation.record.logs, ...levelUpLogs, ...extraLogs, ...rareDropLogs, ...masteryBonusLogs],
+    logs: [
+      ...rawOutcome.record.logs,
+      ...levelUpLogs,
+      ...extraLogs,
+      ...rescueCapacityLogs,
+      ...rareDropLogs,
+      ...masteryBonusLogs,
+    ],
   };
   const masteryResult = updateDungeonMasteryForRecord(state.dungeonMastery, record);
 
@@ -268,7 +375,7 @@ const finishExpedition = (state: GameState, now: number, simulationSeed?: string
     ...(masteryResult.changed && masteryResult.nextLevel > masteryResult.previousLevel
       ? [
           {
-            id: makeId("log"),
+            id: `${active.id}-return-mastery-0`,
             at: active.endsAt,
             type: "success" as const,
             message: `熟練度上昇: ${record.dungeonName} がLv${masteryResult.nextLevel}に到達。踏破${masteryResult.clearCount}回、次回以降 ${formatDungeonMasteryBonus(masteryResult.nextLevel)}。`,
@@ -278,7 +385,7 @@ const finishExpedition = (state: GameState, now: number, simulationSeed?: string
     ...(bossResult.firstDefeat
       ? [
           {
-            id: makeId("log"),
+            id: `${active.id}-return-boss-0`,
             at: active.endsAt,
             type: "success" as const,
             message: `${record.dungeonName}のボス討伐記録が刻まれた。玉座へ戻る道に、また一つ黒い杭が打たれる。`,
@@ -286,7 +393,7 @@ const finishExpedition = (state: GameState, now: number, simulationSeed?: string
         ]
       : []),
     ...achievementResult.unlocked.map((achievement) => ({
-      id: makeId("log"),
+      id: `${active.id}-return-achievement-${achievement.id}`,
       at: active.endsAt,
       type: "success" as const,
       message: `実績解除: ${achievement.title} - ${achievement.description}`,
@@ -305,24 +412,22 @@ const finishExpedition = (state: GameState, now: number, simulationSeed?: string
   return next;
 };
 
-const advanceGameInternal = (state: GameState, now: number, simulationSeed?: string): GameState => {
+const advanceGameInternal = (state: GameState, now: number): GameState => {
   const recovered = recoverUnits(state, now);
-  const finished = finishExpedition(recovered, now, simulationSeed);
+  const finished = finishExpedition(recovered, now);
   return recoverUnits(finished, now);
 };
 
 export const advanceGame = (state: GameState, now: number): GameState =>
   advanceGameInternal(state, now);
 
-export const advanceGameWithSimulationSeed = (state: GameState, now: number, seed: string): GameState =>
-  advanceGameInternal(state, now, seed);
-
-export const startExpedition = (
+const startExpeditionInternal = (
   state: GameState,
   dungeonId: string,
   unitIds: string[],
   strategyId: StrategyId,
   itemId?: string,
+  explicitSeed?: string,
 ): GameActionResult => {
   const now = Date.now();
   if (state.activeExpedition) {
@@ -347,27 +452,45 @@ export const startExpedition = (
     return fail(state, "待機中のユニットだけが出撃できます。");
   }
 
-  let inventory = state.inventory;
   if (itemId) {
     const item = getItemDefinition(itemId);
-    const stock = inventory.find((entry) => entry.itemId === itemId)?.quantity ?? 0;
+    const stock = state.inventory.find((entry) => entry.itemId === itemId)?.quantity ?? 0;
     if (item.type !== "support" || stock <= 0) {
       return fail(state, "選択した持ち込みアイテムを使えません。");
     }
-    inventory = removeInventoryItem(inventory, itemId, 1);
   }
 
   const durationSeconds = getAdjustedDuration(dungeonId, strategyId);
-  const activeExpedition = {
+  const activeMetadata: ExpeditionSimulationMetadata = {
     id: makeId("expedition"),
     dungeonId,
     unitIds: uniqueUnitIds,
     strategy: strategyId,
-    itemId,
+    ...(itemId ? { itemId } : {}),
     startedAt: now,
     endsAt: now + durationSeconds * 1000,
     durationSeconds,
   };
+  const seed = explicitSeed ?? createExpeditionSeed({
+    expeditionId: activeMetadata.id,
+    dungeonId,
+    unitIds: uniqueUnitIds,
+    strategy: strategyId,
+    ...(itemId ? { itemId } : {}),
+    startedAt: activeMetadata.startedAt,
+    endsAt: activeMetadata.endsAt,
+    durationSeconds,
+  });
+  const snapshot = createExpeditionDepartureSnapshotV1(state, activeMetadata);
+  const outcome = createExpeditionRawOutcomeV1(state, activeMetadata, seed, snapshot);
+  const activeExpedition = {
+    ...activeMetadata,
+    simulationVersion: 1 as const,
+    seed,
+    snapshot,
+    outcome,
+  };
+  const inventory = itemId ? removeInventoryItem(state.inventory, itemId, 1) : state.inventory;
 
   return ok(
     {
@@ -383,6 +506,23 @@ export const startExpedition = (
     `${dungeon.name}への遠征を開始しました。`,
   );
 };
+
+export const startExpedition = (
+  state: GameState,
+  dungeonId: string,
+  unitIds: string[],
+  strategyId: StrategyId,
+  itemId?: string,
+): GameActionResult => startExpeditionInternal(state, dungeonId, unitIds, strategyId, itemId);
+
+export const startExpeditionWithSeed = (
+  state: GameState,
+  dungeonId: string,
+  unitIds: string[],
+  strategyId: StrategyId,
+  seed: string,
+  itemId?: string,
+): GameActionResult => startExpeditionInternal(state, dungeonId, unitIds, strategyId, itemId, seed);
 
 export const renameUnit = (state: GameState, unitId: string, name: string): GameActionResult => {
   const nextName = name.trim().slice(0, 12);
