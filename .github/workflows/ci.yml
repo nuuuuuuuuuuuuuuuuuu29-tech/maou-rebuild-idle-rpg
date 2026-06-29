@@ -54,3 +54,94 @@ jobs:
             test-results/
           if-no-files-found: ignore
           retention-days: 14
+
+  balance:
+    name: Deterministic balance regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prepare balance simulation
+        run: |
+          npx tsc -p tsconfig.test.json
+          node scripts/prepare-tests.cjs
+
+      - name: Verify same-seed reproducibility
+        shell: bash
+        run: |
+          node scripts/simulate-balance.cjs \
+            --json \
+            --trials 1000 \
+            --seed 12345 \
+            > balance-repro-1.json
+
+          node scripts/simulate-balance.cjs \
+            --json \
+            --trials 1000 \
+            --seed 12345 \
+            > balance-repro-2.json
+
+          diff -u \
+            balance-repro-1.json \
+            balance-repro-2.json \
+            | tee balance-repro-diff.txt
+
+      - name: Verify committed balance baseline
+        shell: bash
+        run: |
+          node scripts/simulate-balance.cjs \
+            --json \
+            --trials 10000 \
+            --seed 12345 \
+            > balance-current.json
+
+          diff -u \
+            tests/fixtures/balance-baseline-seed-12345-trials-10000.json \
+            balance-current.json \
+            | tee balance-baseline-diff.txt
+
+      - name: Write balance summary
+        if: ${{ success() }}
+        shell: bash
+        run: |
+          node <<'NODE' >> "$GITHUB_STEP_SUMMARY"
+          const fs = require("node:fs");
+          const payload = JSON.parse(
+            fs.readFileSync("balance-current.json", "utf8"),
+          );
+
+          console.log("## Balance regression");
+          console.log("");
+          console.log(`- seed: \`${payload.seed}\``);
+          console.log(`- trials per row: \`${payload.trialsPerRow}\``);
+          console.log(`- rows: \`${payload.rowCount}\``);
+          console.log(`- game state version: \`${payload.gameStateVersion}\``);
+          console.log("- reproducibility: `exact match`");
+          console.log("- committed baseline: `exact match`");
+          NODE
+
+      - name: Upload balance failure artifacts
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: balance-regression-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            balance-repro-1.json
+            balance-repro-2.json
+            balance-repro-diff.txt
+            balance-current.json
+            balance-baseline-diff.txt
+          if-no-files-found: ignore
+          retention-days: 14

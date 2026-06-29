@@ -112,6 +112,7 @@ const {
 } = loadCompiled("lib/expedition.js");
 const { getDungeonMasteryLevel } = loadCompiled("lib/mastery.js");
 const { isRareDropItem } = loadCompiled("lib/rareDrops.js");
+const { SAVE_VERSION } = loadCompiled("lib/storage.js");
 const { getPartyTraitModifiers } = loadCompiled("lib/traits.js");
 
 const dungeonById = new Map(DUNGEONS.map((dungeon) => [dungeon.id, dungeon]));
@@ -488,7 +489,7 @@ const main = () => {
   const rows = runSimulation(options);
   const payload = {
     tool: "maou-rebuild-balance-simulation",
-    gameStateVersion: 5,
+    gameStateVersion: SAVE_VERSION,
     seed: String(options.seed),
     trialsPerRow: options.trials,
     rowCount: rows.length,
