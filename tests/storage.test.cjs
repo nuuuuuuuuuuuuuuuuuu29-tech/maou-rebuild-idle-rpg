@@ -561,12 +561,12 @@ for (const [label, corrupt] of activeCorruptions) {
   });
 }
 
-test("保存versionは6でpackage versionは1.1.0-alpha.7を維持する", () => {
+test("保存versionは6でpackage versionは1.1.0-alpha.8を使用する", () => {
   const { storage } = loadStorageWithFake();
   const packageJson = require("../package.json");
   assert.equal(storage.SAVE_VERSION, 6);
   assert.equal(createInitialState().version, 6);
-  assert.equal(packageJson.version, "1.1.0-alpha.7");
+  assert.equal(packageJson.version, "1.1.0-alpha.8");
 });
 
 test("壊れたセーブデータをバックアップして初期状態へ復旧する", () => {
