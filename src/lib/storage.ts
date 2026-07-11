@@ -65,6 +65,24 @@ export interface StorageResetResult {
   backupKey?: string;
 }
 
+export interface StorageExportResult {
+  ok: boolean;
+  message: string;
+  json?: string;
+  filename?: string;
+}
+
+export type ImportStatus = "imported" | "migrated" | "recovered";
+
+export interface StorageImportResult {
+  ok: boolean;
+  message: string;
+  state?: GameState;
+  status?: ImportStatus;
+  backupKey?: string;
+  importedFromVersion?: number;
+}
+
 interface BackupResult {
   key?: string;
   failed?: boolean;
@@ -1038,6 +1056,14 @@ interface NormalizeGameStateResult {
   migrationNote?: string;
 }
 
+interface ParsedRawSave {
+  state: GameState;
+  sourceVersion: number;
+  migrated: boolean;
+  activeRecoveryReason?: string;
+  migrationNote?: string;
+}
+
 const normalizeGameState = (saved: UnknownRecord, sourceVersion: number): NormalizeGameStateResult => {
   const fallback = createVersionedInitialState();
   const inventory = normalizeInventory(saved.inventory, fallback.inventory);
@@ -1147,6 +1173,30 @@ const normalizeGameState = (saved: UnknownRecord, sourceVersion: number): Normal
   };
 };
 
+const parseRawSave = (raw: string): ParsedRawSave => {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "不明なJSON解析エラー";
+    throw new Error(`JSONを解析できませんでした。(${detail})`);
+  }
+
+  if (!isPotentialSaveData(parsed)) {
+    throw new Error("保存形式がゲームの想定と一致しません。");
+  }
+
+  const migration = migrateSaveData(parsed);
+  const normalized = normalizeGameState(migration.data, migration.fromVersion);
+  return {
+    state: normalized.state,
+    sourceVersion: migration.fromVersion,
+    migrated: migration.migrated,
+    activeRecoveryReason: normalized.activeRecoveryReason,
+    migrationNote: normalized.migrationNote,
+  };
+};
+
 const recoverCorruptSave = (raw: string, reason: string): LoadGameResult => {
   const backup = backupRawSave(raw, "corrupt");
   const state = createVersionedInitialState();
@@ -1180,6 +1230,96 @@ export const saveGameState = (state: GameState): StorageWriteResult => {
   }
 };
 
+const formatExportTimestamp = (date: Date) => {
+  const pad = (value: number) => value.toString().padStart(2, "0");
+  return `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}-${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}`;
+};
+
+export const exportGameState = (
+  state: GameState,
+  exportedAt: Date = new Date(),
+): StorageExportResult => {
+  if (Number.isNaN(exportedAt.getTime())) {
+    return { ok: false, message: "書き出し日時が不正なため、セーブデータを作成できませんでした。" };
+  }
+
+  try {
+    const json = `${JSON.stringify({ ...state, version: SAVE_VERSION }, null, 2)}\n`;
+    return {
+      ok: true,
+      message: "セーブデータを書き出しました。",
+      json,
+      filename: `maou-rebuild-save-v${SAVE_VERSION}-${formatExportTimestamp(exportedAt)}.json`,
+    };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "不明な書き出しエラー";
+    return { ok: false, message: `セーブデータの書き出しに失敗しました。(${detail})` };
+  }
+};
+
+export const importGameState = (raw: string): StorageImportResult => {
+  if (typeof localStorage === "undefined") {
+    return { ok: false, message: "この環境ではlocalStorageを利用できないため、セーブデータを読み込めません。" };
+  }
+  if (!raw.trim()) {
+    return { ok: false, message: "空のセーブデータは読み込めません。" };
+  }
+
+  let parsed: ParsedRawSave;
+  try {
+    parsed = parseRawSave(raw);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "不明な読み込みエラー";
+    return { ok: false, message: `セーブデータを読み込めませんでした。${detail}` };
+  }
+
+  let currentRaw: string | null;
+  try {
+    currentRaw = localStorage.getItem(STORAGE_KEY);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "不明な保存領域エラー";
+    return { ok: false, message: `現在のセーブデータを確認できないため、読み込みを中止しました。(${detail})` };
+  }
+
+  const backup = currentRaw ? backupRawSave(currentRaw, "pre-import") : {};
+  if (backup.failed) {
+    return {
+      ok: false,
+      message: `現在のセーブデータをバックアップできないため、読み込みを中止しました。${backup.message ?? ""}`,
+    };
+  }
+
+  const saveResult = saveGameState(parsed.state);
+  if (!saveResult.ok) {
+    return {
+      ok: false,
+      backupKey: backup.key,
+      message: `読み込んだセーブデータの保存に失敗しました。現在の進行状況は変更していません。${saveResult.message}`,
+    };
+  }
+
+  const status: ImportStatus = parsed.activeRecoveryReason
+    ? "recovered"
+    : parsed.migrated
+      ? "migrated"
+      : "imported";
+  const backupText = backup.key ? ` 置き換え前のセーブは ${backup.key} にバックアップしました。` : "";
+  const message = status === "recovered"
+    ? `${parsed.activeRecoveryReason}${backupText}`
+    : status === "migrated"
+      ? `version ${parsed.sourceVersion} のセーブデータをversion ${SAVE_VERSION}へ移行して読み込みました。${parsed.migrationNote ?? ""}${backupText}`
+      : `セーブデータを読み込みました。${backupText}`;
+
+  return {
+    ok: true,
+    state: parsed.state,
+    status,
+    backupKey: backup.key,
+    ...(parsed.migrated ? { importedFromVersion: parsed.sourceVersion } : {}),
+    message,
+  };
+};
+
 export const loadSavedGame = (): LoadGameResult => {
   if (typeof localStorage === "undefined") {
     return {
@@ -1196,16 +1336,10 @@ export const loadSavedGame = (): LoadGameResult => {
   }
 
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!isPotentialSaveData(parsed)) {
-      return recoverCorruptSave(raw, "保存形式がゲームの想定と一致しません。");
-    }
+    const parsed = parseRawSave(raw);
+    const state = parsed.state;
 
-    const migration = migrateSaveData(parsed);
-    const normalized = normalizeGameState(migration.data, migration.fromVersion);
-    const state = normalized.state;
-
-    if (normalized.activeRecoveryReason) {
+    if (parsed.activeRecoveryReason) {
       const backup = backupRawSave(raw, "corrupt-active-expedition");
       const saveResult = backup.failed ? undefined : saveGameState(state);
       const backupText = backup.failed
@@ -1217,12 +1351,12 @@ export const loadSavedGame = (): LoadGameResult => {
         status: "recovered",
         backupKey: backup.key,
         canSave: !backup.failed && Boolean(saveResult?.ok),
-        message: `${normalized.activeRecoveryReason}${backupText}${saveText}`,
+        message: `${parsed.activeRecoveryReason}${backupText}${saveText}`,
       };
     }
 
-    if (migration.migrated) {
-      const backup = backupRawSave(raw, `pre-migration-v${migration.fromVersion}`);
+    if (parsed.migrated) {
+      const backup = backupRawSave(raw, `pre-migration-v${parsed.sourceVersion}`);
       const saveResult = saveGameState(state);
       const backupText = backup.failed ? "移行前バックアップの作成には失敗しました。" : `移行前データは ${backup.key} に退避しています。`;
       const saveText = saveResult.ok ? "" : ` ${saveResult.message}`;
@@ -1230,8 +1364,8 @@ export const loadSavedGame = (): LoadGameResult => {
         state,
         status: "migrated",
         backupKey: backup.key,
-        migratedFrom: migration.fromVersion,
-        message: `古いセーブデータをversion ${SAVE_VERSION}へ移行しました。${normalized.migrationNote ?? ""}${backupText}${saveText}`,
+        migratedFrom: parsed.sourceVersion,
+        message: `古いセーブデータをversion ${SAVE_VERSION}へ移行しました。${parsed.migrationNote ?? ""}${backupText}${saveText}`,
       };
     }
 

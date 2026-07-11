@@ -1,4 +1,5 @@
-import { expect, test } from "@playwright/test";
+import { readFile } from "node:fs/promises";
+import { expect, test, type Page } from "@playwright/test";
 import { createCompletedGameState, createGameState } from "./fixtures/game-state";
 import {
   collectBrowserErrors,
@@ -7,6 +8,16 @@ import {
   openMobileMenuItem,
   readSavedGame,
 } from "./support/game";
+
+const collectSameOriginHttpErrors = (page: Page) => {
+  const errors: string[] = [];
+  page.on("response", (response) => {
+    if (response.url().startsWith("http://127.0.0.1:4173") && response.status() >= 400) {
+      errors.push(`${response.status()} ${response.url()}`);
+    }
+  });
+  return errors;
+};
 
 test("新規セーブから主要画面を移動できる", async ({ page }) => {
   const browserErrors = collectBrowserErrors(page);
@@ -273,6 +284,140 @@ test("固定記録で戦闘区切りとダメージ統合を再読み込み後�
   await page.getByRole("button", { name: "記録", exact: true }).click();
   await assertBattleLog();
   expect(browserErrors).toEqual([]);
+});
+
+test("設定画面から現在のセーブをJSONファイルへ書き出せる", async ({ page }) => {
+  const browserErrors = collectBrowserErrors(page);
+  const httpErrors = collectSameOriginHttpErrors(page);
+  const completed = createCompletedGameState();
+  const state = createGameState({
+    ...completed,
+    demonLordName: "書出確認魔王",
+    gold: 4321,
+    records: completed.records,
+  });
+  await openGameWithState(page, state);
+  const beforeRaw = await page.evaluate((key) => localStorage.getItem(key), "maou-rebuild-state-v1");
+  await page.getByRole("button", { name: "設定", exact: true }).click();
+
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    page.getByRole("button", { name: "セーブデータを書き出す" }).click(),
+  ]);
+  expect(download.suggestedFilename()).toMatch(/^maou-rebuild-save-v6-\d{8}-\d{6}\.json$/);
+  const downloadPath = await download.path();
+  if (!downloadPath) {
+    throw new Error("export download path is missing");
+  }
+  const raw = await readFile(downloadPath, "utf8");
+  const exported = JSON.parse(raw);
+
+  expect(raw.endsWith("\n")).toBe(true);
+  expect(exported.version).toBe(6);
+  expect(exported.demonLordName).toBe("書出確認魔王");
+  expect(exported.gold).toBe(4321);
+  expect(exported.records).toHaveLength(1);
+  expect(await page.evaluate((key) => localStorage.getItem(key), "maou-rebuild-state-v1")).toBe(beforeRaw);
+  expect(browserErrors).toEqual([]);
+  expect(httpErrors).toEqual([]);
+});
+
+test("設定画面からv6セーブを読み込み、backupとreload後の状態を維持する", async ({ page }) => {
+  const browserErrors = collectBrowserErrors(page);
+  const httpErrors = collectSameOriginHttpErrors(page);
+  const current = createGameState({ demonLordName: "取込前魔王", gold: 123 });
+  const completed = createCompletedGameState();
+  const imported = createGameState({
+    ...completed,
+    demonLordName: "取込後魔王",
+    demonLordLevel: 4,
+    gold: 9876,
+    records: completed.records,
+  });
+  await openGameWithState(page, current);
+  const currentRaw = await page.evaluate((key) => localStorage.getItem(key), "maou-rebuild-state-v1");
+  await page.getByRole("button", { name: "設定", exact: true }).click();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByLabel("セーブデータファイルを選択").setInputFiles({
+    name: "import-v6.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(imported), "utf8"),
+  });
+
+  await expect(page.locator(".notice")).toContainText("セーブデータを読み込みました");
+  const settings = page.getByRole("heading", { name: "保存状態" }).locator("../..");
+  await expect(settings).toContainText("取込後魔王");
+  await expect(settings).toContainText("魔王Lv");
+  await expect(settings).toContainText("4");
+  await expect(settings).toContainText("1件");
+  await expect.poll(async () => (await readSavedGame(page))?.gold).toBe(9876);
+  const backup = await page.evaluate(({ storageKey, expectedRaw }) => {
+    const key = Object.keys(localStorage).find((candidate) => candidate.includes("backup-pre-import"));
+    return {
+      key,
+      value: key ? localStorage.getItem(key) : null,
+      current: localStorage.getItem(storageKey),
+      expectedRaw,
+    };
+  }, { storageKey: "maou-rebuild-state-v1", expectedRaw: currentRaw });
+  expect(backup.key).toBeTruthy();
+  expect(backup.value).toBe(currentRaw);
+  expect(JSON.parse(backup.current ?? "{}").demonLordName).toBe("取込後魔王");
+
+  await page.reload();
+  await page.getByRole("button", { name: "設定", exact: true }).click();
+  await expect(page.getByText("取込後魔王", { exact: true })).toBeVisible();
+  expect((await readSavedGame(page))?.gold).toBe(9876);
+  expect((await readSavedGame(page))?.records).toHaveLength(1);
+  expect(browserErrors).toEqual([]);
+  expect(httpErrors).toEqual([]);
+});
+
+test("mobile設定でimport cancelと不正JSONを安全に拒否する", async ({ page }) => {
+  const browserErrors = collectBrowserErrors(page);
+  const httpErrors = collectSameOriginHttpErrors(page);
+  await page.setViewportSize({ width: 375, height: 812 });
+  const current = createGameState({ demonLordName: "保護対象魔王", gold: 2468 });
+  await openGameWithState(page, current);
+  const currentRaw = await page.evaluate((key) => localStorage.getItem(key), "maou-rebuild-state-v1");
+  await openMobileMenuItem(page, "設定");
+
+  const input = page.getByLabel("セーブデータファイルを選択");
+  await expect(page.getByRole("button", { name: "セーブデータを書き出す" })).toBeVisible();
+  await expect(page.getByText("セーブデータを読み込む", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "セーブデータを初期化" })).toBeVisible();
+  page.once("dialog", (dialog) => dialog.dismiss());
+  await input.setInputFiles({
+    name: "cancelled.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(createGameState({ gold: 9999 })), "utf8"),
+  });
+  await expect(page.getByRole("status").filter({ hasText: "読み込みをキャンセルしました" })).toBeVisible();
+  await expect(input).toHaveValue("");
+  expect(await page.evaluate((key) => localStorage.getItem(key), "maou-rebuild-state-v1")).toBe(currentRaw);
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await input.setInputFiles({
+    name: "broken.json",
+    mimeType: "application/json",
+    buffer: Buffer.from("{ broken json", "utf8"),
+  });
+  await expect(page.locator(".notice")).toContainText("読み込めませんでした");
+  expect(await page.evaluate((key) => localStorage.getItem(key), "maou-rebuild-state-v1")).toBe(currentRaw);
+  await page.reload();
+  expect((await readSavedGame(page))?.demonLordName).toBe("保護対象魔王");
+  expect((await readSavedGame(page))?.gold).toBe(2468);
+  await openMobileMenuItem(page, "設定");
+  await expect(page.getByRole("button", { name: "セーブデータを書き出す" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "セーブデータを初期化" })).toBeVisible();
+  const layout = await page.evaluate(() => ({
+    noHorizontalScroll: document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+    controlsFit: [...document.querySelectorAll<HTMLElement>(".save-transfer-actions .secondary-button, .danger-button")]
+      .every((element) => element.getBoundingClientRect().right <= document.documentElement.clientWidth),
+  }));
+  expect(layout).toEqual({ noHorizontalScroll: true, controlsFit: true });
+  expect(browserErrors).toEqual([]);
+  expect(httpErrors).toEqual([]);
 });
 
 test("375px幅で雇用画面と戦闘ログに横スクロールやナビ重なりがない", async ({ page }) => {

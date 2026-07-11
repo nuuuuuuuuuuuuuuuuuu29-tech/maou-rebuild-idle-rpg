@@ -21,7 +21,14 @@ import {
   startExpedition,
   type GameActionResult,
 } from "./lib/expedition";
-import { SAVE_VERSION, loadSavedGame, resetGameState, saveGameState } from "./lib/storage";
+import {
+  SAVE_VERSION,
+  exportGameState,
+  importGameState,
+  loadSavedGame,
+  resetGameState,
+  saveGameState,
+} from "./lib/storage";
 import { canSelectTitle } from "./lib/titles";
 import type { GameState, StrategyId } from "./types/game";
 
@@ -118,6 +125,33 @@ const App = () => {
     setTab("home");
   };
 
+  const handleExportGame = () => {
+    const result = exportGameState(game);
+    setNotice(result.message);
+    return result;
+  };
+
+  const handleImportGame = (raw: string) => {
+    const result = importGameState(raw);
+    setNotice(result.message);
+    if (!result.ok || !result.state) {
+      return result;
+    }
+
+    const next = advanceGame(result.state, Date.now());
+    const saveResult = saveGameState(next);
+    setGame(next);
+    setNow(Date.now());
+    setSaveEnabled(true);
+    previousLevelRef.current = next.demonLordLevel;
+    setLevelUpNotice(null);
+    setTab("settings");
+    if (!saveResult.ok) {
+      setNotice(`${result.message} ${saveResult.message}`);
+    }
+    return result;
+  };
+
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -177,7 +211,15 @@ const App = () => {
             onSelectTitle={handleSelectTitle}
           />
         )}
-        {tab === "settings" && <Settings game={game} saveVersion={SAVE_VERSION} onReset={handleResetGame} />}
+        {tab === "settings" && (
+          <Settings
+            game={game}
+            saveVersion={SAVE_VERSION}
+            onExport={handleExportGame}
+            onImport={handleImportGame}
+            onReset={handleResetGame}
+          />
+        )}
       </main>
 
       <Nav active={tab} onChange={setTab} />
