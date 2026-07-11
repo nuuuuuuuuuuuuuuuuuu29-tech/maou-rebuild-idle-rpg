@@ -53,8 +53,12 @@ const createV5ActiveState = (overrides = {}) => {
 
 const createFakeLocalStorage = () => {
   const store = new Map();
+  let setItemFault;
   return {
     store,
+    setItemFault(fault) {
+      setItemFault = fault;
+    },
     api: {
       get length() {
         return store.size;
@@ -72,6 +76,9 @@ const createFakeLocalStorage = () => {
         store.delete(key);
       },
       setItem(key, value) {
+        if (setItemFault?.(key, value)) {
+          throw new Error("injected setItem failure");
+        }
         store.set(key, String(value));
       },
     },
@@ -560,6 +567,222 @@ for (const [label, corrupt] of activeCorruptions) {
     assert.match(loaded.message, /進行中遠征だけを解除/, label);
   });
 }
+
+test("現行セーブをversion 6の整形済みJSONとして書き出せる", () => {
+  const { fake, storage } = loadStorageWithFake();
+  const base = createInitialState();
+  const state = startExpeditionWithSeed(
+    { ...base, demonLordName: "書き出し魔王", gold: 765 },
+    "ash-border-village",
+    [base.units[0].id],
+    "balanced",
+    "export-active-seed",
+  ).state;
+  fake.api.setItem(storage.STORAGE_KEY, "current-save-must-not-change");
+  const before = [...fake.store.entries()];
+
+  const result = storage.exportGameState(state, new Date("2026-07-01T15:30:45Z"));
+  const exported = JSON.parse(result.json);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.filename, "maou-rebuild-save-v6-20260701-153045.json");
+  assert.equal(/[\\/:*?"<>|]/.test(result.filename), false);
+  assert.equal(result.json.endsWith("\n"), true);
+  assert.equal(exported.version, 6);
+  assert.equal(exported.demonLordName, "書き出し魔王");
+  assert.equal(exported.gold, 765);
+  assert.equal(exported.activeExpedition.seed, state.activeExpedition.seed);
+  assert.deepEqual(exported.activeExpedition.snapshot, state.activeExpedition.snapshot);
+  assert.deepEqual(exported.activeExpedition.outcome, state.activeExpedition.outcome);
+  assert.deepEqual([...fake.store.entries()], before);
+});
+
+test("正常なv6セーブをcurrent backup後にactive outcomeごと読み込める", () => {
+  const { fake, storage } = loadStorageWithFake();
+  const current = { ...createInitialState(), demonLordName: "置換前魔王", gold: 111 };
+  const currentRaw = JSON.stringify(current);
+  fake.api.setItem(storage.STORAGE_KEY, currentRaw);
+  const base = createInitialState();
+  const imported = startExpeditionWithSeed(
+    { ...base, demonLordName: "取込後魔王", gold: 876, records: [makeRecord({ id: "imported-record" })] },
+    "ash-border-village",
+    [base.units[0].id],
+    "balanced",
+    "import-active-seed",
+  ).state;
+  const expectedActive = structuredClone(imported.activeExpedition);
+
+  const result = storage.importGameState(JSON.stringify(imported));
+  const persisted = JSON.parse(fake.api.getItem(storage.STORAGE_KEY));
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, "imported");
+  assert.equal(result.state.version, 6);
+  assert.equal(result.state.demonLordName, "取込後魔王");
+  assert.equal(result.state.gold, 876);
+  assert.equal(result.state.records[0].id, "imported-record");
+  assert.deepEqual(result.state.activeExpedition, expectedActive);
+  assert.ok(result.backupKey);
+  assert.equal(fake.api.getItem(result.backupKey), currentRaw);
+  assert.equal(persisted.demonLordName, "取込後魔王");
+  assert.deepEqual(persisted.activeExpedition, expectedActive);
+});
+
+test("v5通常セーブをcurrent backup後にv6へ移行して読み込める", () => {
+  const { fake, storage } = loadStorageWithFake();
+  const currentRaw = JSON.stringify({ ...createInitialState(), gold: 100 });
+  fake.api.setItem(storage.STORAGE_KEY, currentRaw);
+  const imported = { ...createInitialState(), version: 5, demonLordName: "旧世代魔王", gold: 654, activeExpedition: undefined };
+
+  const result = storage.importGameState(JSON.stringify(imported));
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, "migrated");
+  assert.equal(result.importedFromVersion, 5);
+  assert.equal(result.state.version, 6);
+  assert.equal(result.state.demonLordName, "旧世代魔王");
+  assert.equal(result.state.gold, 654);
+  assert.equal(result.state.activeExpedition, undefined);
+  assert.equal(fake.api.getItem(result.backupKey), currentRaw);
+  assert.equal(JSON.parse(fake.api.getItem(storage.STORAGE_KEY)).version, 6);
+});
+
+test("v5 active importは同じrawから同じlegacy seedとoutcomeを一度だけ生成する", () => {
+  const rawState = createV5ActiveState({ demonLordName: "移行遠征魔王" });
+  const raw = JSON.stringify(rawState);
+  const firstEnvironment = loadStorageWithFake();
+  firstEnvironment.fake.api.setItem(firstEnvironment.storage.STORAGE_KEY, JSON.stringify(createInitialState()));
+  const first = firstEnvironment.storage.importGameState(raw);
+  const firstActive = structuredClone(first.state.activeExpedition);
+
+  const secondEnvironment = loadStorageWithFake();
+  secondEnvironment.fake.api.setItem(secondEnvironment.storage.STORAGE_KEY, JSON.stringify(createInitialState()));
+  const second = secondEnvironment.storage.importGameState(raw);
+
+  assert.equal(first.ok, true);
+  assert.equal(first.status, "migrated");
+  assert.equal(first.importedFromVersion, 5);
+  assert.match(firstActive.seed, /^legacy-v5-[0-9a-f]{8}$/);
+  assert.deepEqual(second.state.activeExpedition.seed, firstActive.seed);
+  assert.deepEqual(second.state.activeExpedition.snapshot, firstActive.snapshot);
+  assert.deepEqual(second.state.activeExpedition.outcome, firstActive.outcome);
+  assert.equal(first.state.inventory[0].quantity, rawState.inventory[0].quantity);
+
+  const persistedV6 = JSON.stringify(first.state);
+  const repeated = secondEnvironment.storage.importGameState(persistedV6);
+  assert.equal(repeated.status, "imported");
+  assert.deepEqual(repeated.state.activeExpedition, firstActive);
+});
+
+test("不正JSON importは現在のセーブを変更せずbackupも作らない", () => {
+  const { fake, storage } = loadStorageWithFake();
+  const currentRaw = JSON.stringify({ ...createInitialState(), demonLordName: "保護対象" });
+  fake.api.setItem(storage.STORAGE_KEY, currentRaw);
+
+  const result = storage.importGameState("{ broken json");
+
+  assert.equal(result.ok, false);
+  assert.equal(result.state, undefined);
+  assert.equal(fake.api.getItem(storage.STORAGE_KEY), currentRaw);
+  assert.equal([...fake.store.keys()].some((key) => key.startsWith("maou-rebuild-state-backup")), false);
+});
+
+test("未来version importは現在のセーブを変更せず拒否する", () => {
+  const { fake, storage } = loadStorageWithFake();
+  const currentRaw = JSON.stringify({ ...createInitialState(), gold: 321 });
+  fake.api.setItem(storage.STORAGE_KEY, currentRaw);
+
+  const result = storage.importGameState(JSON.stringify({ version: 999 }));
+
+  assert.equal(result.ok, false);
+  assert.match(result.message, /新しいversion 999/);
+  assert.equal(fake.api.getItem(storage.STORAGE_KEY), currentRaw);
+  assert.equal(fake.store.size, 1);
+});
+
+test("空・不正root・不正version importを現在のセーブ不変で拒否する", () => {
+  const invalidValues = ["", "[]", JSON.stringify({ version: "6" }), JSON.stringify({ version: 0 }), JSON.stringify({ version: 1.5 }), JSON.stringify({ version: 6, units: {} })];
+  invalidValues.forEach((raw) => {
+    const { fake, storage } = loadStorageWithFake();
+    const currentRaw = JSON.stringify({ ...createInitialState(), gold: 246 });
+    fake.api.setItem(storage.STORAGE_KEY, currentRaw);
+    const result = storage.importGameState(raw);
+    assert.equal(result.ok, false, raw);
+    assert.equal(result.state, undefined, raw);
+    assert.equal(fake.api.getItem(storage.STORAGE_KEY), currentRaw, raw);
+    assert.equal(fake.store.size, 1, raw);
+  });
+});
+
+test("破損v6 active importは再抽選せず局所復旧してcurrent backupを残す", () => {
+  const { fake, storage } = loadStorageWithFake();
+  const currentRaw = JSON.stringify({ ...createInitialState(), demonLordName: "置換前" });
+  fake.api.setItem(storage.STORAGE_KEY, currentRaw);
+  const imported = createValidatorFixture();
+  const participantId = imported.activeExpedition.unitIds[0];
+  imported.activeExpedition.outcome.progressLogCount += 1;
+
+  const result = storage.importGameState(JSON.stringify(imported));
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, "recovered");
+  assert.equal(result.state.activeExpedition, undefined);
+  assert.equal(result.state.units.find((unit) => unit.id === participantId).status, "idle");
+  assert.equal(result.state.gold, imported.gold);
+  assert.deepEqual(result.state.inventory, imported.inventory);
+  assert.deepEqual(result.state.records.map((record) => record.id), imported.records.map((record) => record.id));
+  assert.deepEqual(result.state.collection, imported.collection);
+  assert.equal(fake.api.getItem(result.backupKey), currentRaw);
+  assert.match(result.message, /進行中遠征だけを解除/);
+});
+
+test("pre-import backup失敗時はimportを中止してcurrent saveを維持する", () => {
+  const { fake, storage } = loadStorageWithFake();
+  const currentRaw = JSON.stringify({ ...createInitialState(), gold: 444 });
+  fake.api.setItem(storage.STORAGE_KEY, currentRaw);
+  fake.setItemFault((key) => key.startsWith("maou-rebuild-state-backup-pre-import"));
+  const importedRaw = JSON.stringify({ ...createInitialState(), gold: 999 });
+
+  const result = storage.importGameState(importedRaw);
+
+  assert.equal(result.ok, false);
+  assert.match(result.message, /バックアップできないため/);
+  assert.equal(result.state, undefined);
+  assert.equal(fake.api.getItem(storage.STORAGE_KEY), currentRaw);
+  assert.equal(fake.store.size, 1);
+});
+
+test("imported save書込み失敗時は旧saveと成功済みbackupを維持する", () => {
+  const { fake, storage } = loadStorageWithFake();
+  const currentRaw = JSON.stringify({ ...createInitialState(), gold: 555 });
+  fake.api.setItem(storage.STORAGE_KEY, currentRaw);
+  fake.setItemFault((key) => key === storage.STORAGE_KEY);
+  const importedRaw = JSON.stringify({ ...createInitialState(), gold: 999 });
+
+  const result = storage.importGameState(importedRaw);
+
+  assert.equal(result.ok, false);
+  assert.match(result.message, /保存に失敗/);
+  assert.equal(result.state, undefined);
+  assert.equal(fake.api.getItem(storage.STORAGE_KEY), currentRaw);
+  assert.ok(result.backupKey);
+  assert.equal(fake.api.getItem(result.backupKey), currentRaw);
+});
+
+test("既存resetはcurrent saveをbackupしてversion 6の初期状態を保存する", () => {
+  const { fake, storage } = loadStorageWithFake();
+  const currentRaw = JSON.stringify({ ...createInitialState(), demonLordName: "初期化前魔王", gold: 777 });
+  fake.api.setItem(storage.STORAGE_KEY, currentRaw);
+
+  const result = storage.resetGameState();
+
+  assert.equal(result.ok, true);
+  assert.equal(result.state.version, 6);
+  assert.equal(result.state.gold, createInitialState().gold);
+  assert.ok(result.backupKey);
+  assert.equal(fake.api.getItem(result.backupKey), currentRaw);
+  assert.equal(JSON.parse(fake.api.getItem(storage.STORAGE_KEY)).version, 6);
+});
 
 test("保存versionは6でpackage versionは1.1.0-alpha.8を使用する", () => {
   const { storage } = loadStorageWithFake();

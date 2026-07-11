@@ -1779,6 +1779,69 @@ label {
   line-height: 1.45;
 }
 
+.save-transfer-panel {
+  border-color: rgba(216, 168, 78, 0.34);
+}
+
+.save-transfer-warning {
+  border-left: 3px solid var(--gold);
+  border-radius: 0 6px 6px 0;
+  background: rgba(216, 168, 78, 0.08);
+  color: var(--muted);
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  line-height: 1.6;
+}
+
+.save-transfer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.save-file-control {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.save-file-control.is-disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.save-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.save-file-control:focus-within {
+  outline: 2px solid var(--gold-2);
+  outline-offset: 3px;
+}
+
+.save-selected-file {
+  max-width: 100%;
+  margin-top: 10px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.settings-feedback {
+  min-height: 1.5em;
+  margin-top: 10px;
+  color: var(--gold-2);
+  overflow-wrap: anywhere;
+}
+
 .danger-panel {
   border-color: rgba(220, 104, 100, 0.58);
   background:
@@ -2360,6 +2423,16 @@ label {
   .empty-state {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .save-transfer-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .save-transfer-actions .secondary-button,
+  .save-file-control {
+    width: 100%;
   }
 
   h1 {
