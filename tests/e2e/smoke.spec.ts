@@ -78,6 +78,39 @@ test("最安候補を雇用し所持金と仲間をリロード後も保持す�
   expect(browserErrors).toEqual([]);
 });
 
+test("移行バックアップに失敗しても画面操作で旧セーブを上書きしない", async ({ page }) => {
+  const browserErrors = collectBrowserErrors(page);
+  const raw = JSON.stringify({ ...createGameState(), version: 5 });
+  await page.goto("/");
+  await page.evaluate((value) => {
+    localStorage.clear();
+    localStorage.setItem("maou-rebuild-state-v1", value);
+  }, raw);
+  await page.addInitScript(() => {
+    const originalSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (key.startsWith("maou-rebuild-state-backup")) {
+        throw new DOMException("Backup storage unavailable", "QuotaExceededError");
+      }
+      return originalSetItem.call(this, key, value);
+    };
+  });
+  await page.reload();
+  await expect(page.getByRole("status")).toContainText("自動保存を停止");
+  await page.getByRole("button", { name: "司令部" }).click();
+  const candidate = page.locator("article.recruitment-card").filter({
+    has: page.getByRole("heading", { name: "煤牙ゴブリン" }),
+  });
+  await candidate.getByRole("button", { name: "25G" }).click();
+  await expect(page.getByRole("status")).toContainText("雇用しました");
+  await expect(page.locator(".screen-heading .pill")).toHaveText("95G");
+  expect(await page.evaluate(() => localStorage.getItem("maou-rebuild-state-v1"))).toBe(raw);
+  await page.reload();
+  await expect(page.getByRole("status")).toContainText("自動保存を停止");
+  expect(await page.evaluate(() => localStorage.getItem("maou-rebuild-state-v1"))).toBe(raw);
+  expect(browserErrors).toEqual([]);
+});
+
 test("所持金不足では連打しても雇用されない", async ({ page }) => {
   const browserErrors = collectBrowserErrors(page);
   await openGameWithState(page, createGameState({ gold: 0 }));

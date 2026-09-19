@@ -166,12 +166,16 @@ const backupCurrentSave = (reason: string): BackupResult => {
     return { failed: true, message: "localStorageを利用できないため、バックアップを作成できませんでした。" };
   }
 
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) {
-    return {};
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+    return backupRawSave(raw, reason);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "不明な読み込みエラー";
+    return { failed: true, message: `現在のセーブを確認できませんでした。(${detail})` };
   }
-
-  return backupRawSave(raw, reason);
 };
 
 const isPotentialSaveData = (value: unknown): value is UnknownRecord => {
@@ -1330,7 +1334,18 @@ export const loadSavedGame = (): LoadGameResult => {
     };
   }
 
-  const raw = localStorage.getItem(STORAGE_KEY);
+  let raw: string | null;
+  try {
+    raw = localStorage.getItem(STORAGE_KEY);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "不明な読み込みエラー";
+    return {
+      state: createVersionedInitialState(),
+      status: "fresh",
+      canSave: false,
+      message: `保存データを読み取れませんでした。元データを保護するため自動保存を停止しています。ブラウザの保存設定を確認して再読み込みしてください。(${detail})`,
+    };
+  }
   if (!raw) {
     return { state: createVersionedInitialState(), status: "fresh", message: "" };
   }
@@ -1357,15 +1372,17 @@ export const loadSavedGame = (): LoadGameResult => {
 
     if (parsed.migrated) {
       const backup = backupRawSave(raw, `pre-migration-v${parsed.sourceVersion}`);
-      const saveResult = saveGameState(state);
-      const backupText = backup.failed ? "移行前バックアップの作成には失敗しました。" : `移行前データは ${backup.key} に退避しています。`;
-      const saveText = saveResult.ok ? "" : ` ${saveResult.message}`;
+      const saveResult = backup.failed ? undefined : saveGameState(state);
+      const canSave = !backup.failed && Boolean(saveResult?.ok);
+      const backupText = backup.failed ? "移行前バックアップを作成できませんでした。" : `移行前データは ${backup.key} に退避しています。`;
+      const saveText = saveResult && !saveResult.ok ? ` ${saveResult.message}` : "";
       return {
         state,
         status: "migrated",
         backupKey: backup.key,
+        canSave,
         migratedFrom: parsed.sourceVersion,
-        message: `古いセーブデータをversion ${SAVE_VERSION}へ移行しました。${parsed.migrationNote ?? ""}${backupText}${saveText}`,
+        message: `古いセーブデータをversion ${SAVE_VERSION}へ移行しました。${parsed.migrationNote ?? ""}${backupText}${saveText}${canSave ? "" : " 元データは上書きせず、自動保存を停止しています。ブラウザの保存領域を確認して再読み込みしてください。"}`,
       };
     }
 

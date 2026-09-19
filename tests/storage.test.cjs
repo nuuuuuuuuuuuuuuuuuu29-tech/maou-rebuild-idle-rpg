@@ -382,6 +382,66 @@ test("v5通常セーブをv6へ移行して移行前backupを維持する", () =
   assert.equal(JSON.parse(fake.api.getItem(storage.STORAGE_KEY)).version, 6);
 });
 
+test("移行前backup失敗時は通常・進行中v5セーブを上書きせず自動保存を止める", () => {
+  for (const legacy of [{ ...createInitialState(), version: 5, gold: 654 }, createV5ActiveState()]) {
+    const { fake, storage } = loadStorageWithFake();
+    const raw = JSON.stringify(legacy);
+    fake.api.setItem(storage.STORAGE_KEY, raw);
+    fake.setItemFault((key) => key.startsWith("maou-rebuild-state-backup"));
+
+    const loaded = storage.loadSavedGame();
+    assert.equal(loaded.status, "migrated");
+    assert.equal(loaded.canSave, false);
+    assert.equal(loaded.state.gold, legacy.gold);
+    assert.equal(loaded.backupKey, undefined);
+    assert.equal(fake.api.getItem(storage.STORAGE_KEY), raw);
+    assert.match(loaded.message, /自動保存を停止/);
+
+    fake.setItemFault(undefined);
+    const retried = storage.loadSavedGame();
+    assert.equal(retried.canSave, true);
+    assert.equal(fake.api.getItem(retried.backupKey), raw);
+    assert.equal(JSON.parse(fake.api.getItem(storage.STORAGE_KEY)).version, 6);
+    assert.deepEqual(retried.state.activeExpedition, loaded.state.activeExpedition);
+  }
+});
+
+test("移行後save書込み失敗時も元データとbackupを維持して自動保存を止める", () => {
+  const { fake, storage } = loadStorageWithFake();
+  const raw = JSON.stringify({ ...createInitialState(), version: 5, gold: 654 });
+  fake.api.setItem(storage.STORAGE_KEY, raw);
+  fake.setItemFault((key) => key === storage.STORAGE_KEY);
+  const loaded = storage.loadSavedGame();
+  assert.equal(loaded.canSave, false);
+  assert.equal(fake.api.getItem(storage.STORAGE_KEY), raw);
+  assert.equal(fake.api.getItem(loaded.backupKey), raw);
+  assert.match(loaded.message, /自動保存を停止/);
+});
+
+test("保存領域を読めない起動では例外を漏らさず元データを保護する", () => {
+  const { fake, storage } = loadStorageWithFake();
+  const raw = JSON.stringify({ ...createInitialState(), gold: 654 });
+  fake.api.setItem(storage.STORAGE_KEY, raw);
+  fake.api.getItem = () => { throw new Error("read access denied"); };
+  const loaded = storage.loadSavedGame();
+  assert.equal(loaded.canSave, false);
+  assert.match(loaded.message, /読み取れませんでした/);
+  assert.equal(fake.store.get(storage.STORAGE_KEY), raw);
+  assert.equal(fake.store.size, 1);
+});
+
+test("保存領域を読めない場合は初期化を中止する", () => {
+  const { fake, storage } = loadStorageWithFake();
+  const raw = JSON.stringify({ ...createInitialState(), gold: 654 });
+  fake.api.setItem(storage.STORAGE_KEY, raw);
+  fake.api.getItem = () => { throw new Error("read access denied"); };
+  const result = storage.resetGameState();
+  assert.equal(result.ok, false);
+  assert.equal(result.state, undefined);
+  assert.equal(fake.store.get(storage.STORAGE_KEY), raw);
+  assert.equal(fake.store.size, 1);
+});
+
 test("v5進行中遠征を正規化済みstateから一度だけ決定的にv6へupgradeする", () => {
   const { fake, storage } = loadStorageWithFake();
   const rawState = createV5ActiveState();
