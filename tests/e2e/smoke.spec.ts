@@ -46,6 +46,19 @@ test("新規セーブから主要画面を移動できる", async ({ page }) => 
   expect(browserErrors).toEqual([]);
 });
 
+test("スマホで初回案内から遠征準備へ進むと画面の先頭が表示される", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 660 });
+  await openFreshGame(page);
+
+  const firstExpedition = page.getByRole("button", { name: "最初の遠征へ" });
+  await firstExpedition.scrollIntoViewIfNeeded();
+  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+
+  await firstExpedition.click();
+  await expect(page.getByRole("heading", { name: "奪還する領地を選ぶ" })).toBeInViewport();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+});
+
 test("最安候補を雇用し所持金と仲間をリロード後も保持する", async ({ page }) => {
   const browserErrors = collectBrowserErrors(page);
   await openFreshGame(page);

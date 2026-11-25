@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Collection from "./components/Collection";
 import CommandCenter from "./components/CommandCenter";
 import Expedition from "./components/Expedition";
@@ -41,6 +41,10 @@ const App = () => {
   const [saveEnabled, setSaveEnabled] = useState(initialLoad.canSave ?? true);
   const [levelUpNotice, setLevelUpNotice] = useState<string | null>(null);
   const previousLevelRef = useRef(game.demonLordLevel);
+
+  useLayoutEffect(() => {
+    window.scrollTo(0, 0);
+  }, [tab]);
 
   useEffect(() => {
     if (!saveEnabled) {
